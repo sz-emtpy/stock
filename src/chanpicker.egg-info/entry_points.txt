@@ -1,0 +1,2 @@
+[console_scripts]
+chanpicker = chanpicker.cli:main

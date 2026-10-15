@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chanpicker"
+version = "0.1.0"
+description = "Chan theory A-share watchlist scanner: first-buy focus pool and second-buy alerts."
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "requests>=2.31",
+]
+
+[project.scripts]
+chanpicker = "chanpicker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

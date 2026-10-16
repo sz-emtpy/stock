@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional
 
@@ -51,10 +52,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def add_common_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--period",
+        default="day",
+        choices=["day", "m30", "m15"],
+        help="周期标签：minute CSV 传入 m30/m15，信号与 K 线会带上该周期（默认 day）",
+    )
     parser.add_argument("--min-stroke-gap", type=int, default=4, help="minimum bar gap between two fractals to form a stroke")
     parser.add_argument("--min-divergence-score", type=float, default=0.05, help="minimum first-buy divergence score")
     parser.add_argument("--min-second-buy-score", type=float, default=0.0, help="minimum second-buy pullback weakening score")
     parser.add_argument("--min-third-buy-score", type=float, default=0.0, help="minimum third-buy pullback weakening score")
+    parser.add_argument("--min-top-divergence-score", type=float, default=0.05, help="minimum first-sell top divergence score")
+    parser.add_argument("--min-second-sell-score", type=float, default=0.0, help="minimum second-sell rebound weakening score")
     parser.add_argument("--min-macd-area", type=float, default=1e-9, help="MACD area below this value falls back to price effort")
     parser.add_argument("--no-zhongshu-required", action="store_true", help="allow first-buy signals without a prior center; useful for small samples")
     parser.add_argument("--max-wait-bars", type=int, default=30, help="bars to wait before downgrading a watch item")
@@ -67,6 +76,8 @@ def config_from_args(args: argparse.Namespace) -> ChanConfig:
         min_divergence_score=args.min_divergence_score,
         min_second_buy_score=args.min_second_buy_score,
         min_third_buy_score=args.min_third_buy_score,
+        min_top_divergence_score=args.min_top_divergence_score,
+        min_second_sell_score=args.min_second_sell_score,
         min_macd_area=args.min_macd_area,
         require_zhongshu_for_first_buy=not args.no_zhongshu_required,
         max_wait_bars=args.max_wait_bars,
@@ -81,6 +92,8 @@ def run_scan(args: argparse.Namespace) -> int:
     results = []
     for csv_path in args.csv:
         bars = load_bars_csv(csv_path, symbol=args.symbol)
+        if args.period != "day":
+            bars = [replace(bar, period=args.period) for bar in bars]
         result = engine.scan(bars)
         results.append(result.to_dict())
     payload = {"results": results}
@@ -97,6 +110,8 @@ def run_watch(args: argparse.Namespace) -> int:
     scans = []
     for csv_path in args.csv:
         bars = load_bars_csv(csv_path)
+        if args.period != "day":
+            bars = [replace(bar, period=args.period) for bar in bars]
         result = engine.scan(bars)
         scans.append(result.to_dict())
         symbol_items = [item for item in updated if item.symbol == result.symbol]

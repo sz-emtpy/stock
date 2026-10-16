@@ -1,6 +1,8 @@
 """ChanPicker: daily-level Chan theory first-buy watchlist and second-buy alert engine."""
 
 from .core import (
+    CLOSED_STATES,
+    COOLDOWN_STATES,
     Bar,
     ChanConfig,
     ChanEngine,
@@ -9,14 +11,21 @@ from .core import (
     Signal,
     SignalKind,
     Stroke,
+    TRACKING_STATES,
+    WATCH_STATE_LABELS,
     WatchItem,
     WatchState,
     WatchlistManager,
     Zhongshu,
     load_bars_csv,
+    segment_meta,
 )
 
 __all__ = [
+    "CLOSED_STATES",
+    "COOLDOWN_STATES",
+    "TRACKING_STATES",
+    "WATCH_STATE_LABELS",
     "Bar",
     "ChanConfig",
     "ChanEngine",
@@ -30,4 +39,5 @@ __all__ = [
     "WatchlistManager",
     "Zhongshu",
     "load_bars_csv",
+    "segment_meta",
 ]

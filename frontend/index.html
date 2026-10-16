@@ -59,14 +59,32 @@ th { text-align: left; color: var(--text-dim); font-weight: 500; font-size: 12px
 td { padding: 9px 10px; border-bottom: 1px solid rgba(45,51,59,.5); font-size: 13px; }
 tr:hover td { background: rgba(79,140,255,.05); }
 tr.clickable { cursor: pointer; }
+/* 可排序表头：只有带 data-key 的列可点，箭头表示当前排序方向 */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--accent); }
+th.sorted { color: var(--accent); font-weight: 600; }
+tr.more-row td { text-align: center; padding: 10px; }
 .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
 .tag.first-buy { color: #f0b429; background: rgba(240,180,41,.14); }
 .tag.second-buy { color: #3fb950; background: rgba(63,185,80,.14); }
 .tag.third-buy { color: #a371f7; background: rgba(163,113,247,.16); }
+.tag.first-sell { color: #ff7d6b; background: rgba(255,125,107,.16); }
+.tag.second-sell { color: #ff4d4f; background: rgba(255,77,79,.18); }
 .tag.wait { color: var(--accent); background: rgba(79,140,255,.12); }
 .tag.weak { color: var(--text-dim); background: rgba(139,148,158,.14); }
 .tag.opp { color: #3fb950; background: rgba(63,185,80,.14); }
 .tag.fail { color: var(--up); background: rgba(239,68,68,.12); }
+.tag.fail2 { color: #ff9f43; background: rgba(255,159,67,.14); }
+.ssr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin: 8px 0 6px; }
+.ssr-row { background: rgba(255,255,255,.04); border-radius: 8px; padding: 10px 12px; border: 0.5px solid var(--border); }
+.ssr-k { font-size: 12px; color: var(--text-dim); }
+.ssr-v { font-size: 18px; font-weight: 600; margin: 2px 0 4px; }
+.ssr-v .dim { font-size: 12px; font-weight: 400; color: var(--text-dim); }
+.ssr-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+.ssr-hist { display: flex; flex-wrap: wrap; gap: 4px; }
+.ssr-hist .chip { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: rgba(255,255,255,.06); color: var(--text-dim); }
+.ssr-hist .chip.ok { color: #3fb950; background: rgba(63,185,80,.14); }
+.ssr-hist .chip.bad { color: #ff9f43; background: rgba(255,159,67,.14); }
 .red { color: var(--up); }
 .green { color: var(--down); }
 .progress-wrap { background: var(--panel-2); border-radius: 6px; height: 8px; overflow: hidden; margin: 10px 0; }
@@ -77,6 +95,12 @@ tr.clickable { cursor: pointer; }
 .verdict .sub { color: var(--text-dim); font-size: 12px; margin-top: 3px; }
 .verdict.yes { border-color: rgba(63,185,80,.4); background: linear-gradient(90deg, rgba(63,185,80,.08), var(--panel)); }
 .verdict.no { border-color: var(--border); }
+.verdict.risk { border-color: rgba(255,77,79,.45); background: linear-gradient(90deg, rgba(255,77,79,.12), var(--panel)); }
+.verdict.info { border-color: rgba(79,140,255,.35); background: linear-gradient(90deg, rgba(79,140,255,.08), var(--panel)); }
+.seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { background: none; border: none; color: var(--text-dim); padding: 8px 16px; font-size: 13px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.active { background: var(--accent); color: #fff; }
 #chart { width: 100%; height: 520px; }
 .legend { display: flex; gap: 16px; margin: 8px 0 14px; flex-wrap: wrap; }
 .legend span { font-size: 12px; color: var(--text-dim); display: inline-flex; align-items: center; gap: 6px; }
@@ -85,6 +109,7 @@ tr.clickable { cursor: pointer; }
 .kv .item { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
 .kv .item .k { color: var(--text-dim); font-size: 11px; margin-bottom: 3px; }
 .kv .item .v { font-size: 14px; font-weight: 600; }
+.kv .item .sub { color: var(--text-dim); font-size: 11px; margin-top: 4px; line-height: 1.5; }
 .empty { text-align: center; color: var(--text-dim); padding: 42px 0; }
 .toast { position: fixed; top: 60px; right: 24px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; z-index: 99; display: none; box-shadow: 0 8px 30px rgba(0,0,0,.4); }
 .toast.show { display: block; }
@@ -110,15 +135,23 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   <button data-tab="market" class="active">市场扫描</button>
   <button data-tab="stock">个股查询</button>
   <button data-tab="watch">关注圈</button>
-  <button data-tab="pools">三日买点池</button>
+  <button data-tab="pools">三日买卖点池</button>
 </nav>
 
 <main>
-  <section class="tab" id="tab-market">
+  <section class="tab active" id="tab-market">
     <div class="card">
       <div class="toolbar">
-        <button class="primary" id="btn-scan">扫描沪深300成分股</button>
-        <span class="hint" id="scan-meta">扫描范围：沪深300成分股 · 日线级别 · 前复权</span>
+        <button class="primary" id="btn-scan">扫描全部A股</button>
+        <button class="ghost" id="btn-scan-hs300">仅沪深300（快速）</button>
+        <label class="hint" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="scan-force"> 强制重取
+        </label>
+        <span class="hint" id="scan-meta">扫描范围：全部A股 · 日线级别 · 前复权</span>
+      </div>
+      <div class="hint" style="margin-top:6px">
+        范围口径：全部 A 股剔除<b>北交所</b>与<b>风险警示股（ST / *ST / SST / S*ST）</b>，实际约 5000 只。
+        首次全量约需 30–50 分钟（可中断后续跑），已取过数的股票会直接复用缓存。
       </div>
       <div class="progress-wrap" id="scan-progress-wrap" style="display:none">
         <div class="progress-bar" id="scan-progress-bar"></div>
@@ -126,10 +159,18 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       <div class="hint" id="scan-message"></div>
     </div>
     <div class="card">
+      <h2>历史买点成功率 <span class="count" id="count-success">样本不足</span></h2>
+      <div class="hint" style="margin-bottom:10px">
+        口径：<b>一买</b>以「入圈后是否引出二买」计成败；<b>二买</b>以「确认后 <b id="wait-bars-note">30</b> 根考验窗口内
+        是否守住二买低点」计成败。全部统计自<b>本地关注圈历史记录</b>，不是实时行情推导，样本随时间累积才会稳定。
+      </div>
+      <div class="kv" id="success-kv"></div>
+    </div>
+    <div class="card">
       <h2>一买候选 <span class="count" id="count-first">0</span></h2>
       <div class="hint" style="margin-bottom:8px">近30日触发「背驰+一买」→ 纳入关注圈等待二买（入场券，非买入提示）</div>
       <table id="table-first">
-        <thead><tr><th>代码</th><th>名称</th><th>信号日</th><th>信号价</th><th>背驰度</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">背驰度</th><th>状态</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-first" style="display:none">暂无一买候选，点击上方按钮启动扫描</div>
@@ -138,7 +179,7 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       <h2>二买信号 <span class="count" id="count-second">0</span></h2>
       <div class="hint" style="margin-bottom:8px">近30日触发「一买后回调不破前低 + 力度衰减」→ 机会提示</div>
       <table id="table-second">
-        <thead><tr><th>代码</th><th>名称</th><th>信号日</th><th>信号价</th><th>回调衰减</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">回调衰减</th><th>状态</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-second" style="display:none">暂无二买信号</div>
@@ -148,12 +189,22 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   <section class="tab" id="tab-stock">
     <div class="toolbar">
       <input type="text" id="symbol-input" placeholder="输入代码，如 sh600519 或 sz000063">
+      <div class="seg" id="period-switch">
+        <button data-period="day" class="active">日线</button>
+        <button data-period="m30">30分钟</button>
+        <button data-period="m15">15分钟</button>
+      </div>
       <button class="primary" id="btn-analyze">分析</button>
       <label class="hint" style="display:flex;align-items:center;gap:6px">
         <input type="checkbox" id="refresh-flag" style="accent-color:var(--accent)"> 强制刷新行情
       </label>
-      <span class="hint">支持沪深A股票（sh/sz前缀）· 日线 · 前复权 · 近400根K线</span>
     </div>
+    <div class="toolbar" style="margin-top:10px">
+      <button class="ghost" id="btn-prev-stock" disabled>← 上一只</button>
+      <span class="hint" id="nav-info">从列表点「查看结构」进入后，可在这里左右切换（← → 切换，Esc 返回列表）</span>
+      <button class="ghost" id="btn-next-stock" disabled>下一只 →</button>
+    </div>
+    <div class="hint" id="period-note" style="margin:-6px 0 14px">支持沪深A股票（sh/sz前缀）· 日线 · 前复权 · 近400根K线</div>
     <div id="verdict-box" style="display:none"></div>
     <div class="card">
       <h2>K线结构图</h2>
@@ -161,10 +212,17 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
         <span><i class="dot" style="background:#f0b429"></i>一买</span>
         <span><i class="dot" style="background:#3fb950"></i>二买</span>
         <span><i class="dot" style="background:#a371f7"></i>三买</span>
+        <span><i class="dot" style="background:#ff7d6b"></i>一卖（顶背驰）</span>
+        <span><i class="dot" style="background:#ff4d4f"></i>二卖（反弹不创新高）</span>
         <span><i class="dot" style="background:#ff7d45"></i>顶分型</span>
         <span><i class="dot" style="background:#58a6ff"></i>底分型</span>
         <span><i class="dot" style="background:#8b949e"></i>笔</span>
         <span><i class="dot" style="background:rgba(137,87,229,.45)"></i>中枢</span>
+        <span><i class="dot" style="background:transparent;border:1px dashed #9aa4b0"></i>背驰前段</span>
+        <span><i class="dot" style="background:transparent;border:1px solid #f0b429"></i>背驰段</span>
+        <label class="hint" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="divergence-all" style="accent-color:var(--accent)"> 显示全部背驰段
+        </label>
       </div>
       <div id="chart"></div>
     </div>
@@ -176,10 +234,18 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
 
   <section class="tab" id="tab-watch">
     <div class="card">
-      <h2>关注圈 <span class="count" id="count-watch">0</span></h2>
-      <div class="hint" style="margin-bottom:8px">状态机：待二买 → (二买确认)机会 / (破一买低点)失败 / (超时)弱跟踪</div>
+      <div class="toolbar">
+        <h2 style="margin:0">关注圈 <span class="count" id="count-watch">0</span></h2>
+        <button class="ghost" id="btn-watch-refresh">重评关注圈</button>
+        <span class="hint" id="watch-meta">重评走本地 K 线缓存，不联网，约几秒</span>
+      </div>
+      <div class="hint" style="margin-bottom:8px">
+        状态机：待二买 → (二买确认)机会 / (破一买低点)一买失败 / (超时)弱跟踪 / (二买后窗口内破二买低点)二买失败。<br>
+        <b>一买失败与二买失败即剔除出圈</b>（记录仍留在库里供成功率统计），在圈只剩待二买、弱跟踪与机会已触发。
+        新增交易日后点「重评关注圈」才会把该失败的记录翻状态——二买失败只能在后续 K 线上观测到。
+      </div>
       <table id="table-watch">
-        <thead><tr><th>代码</th><th>名称</th><th>一买日</th><th>一买价</th><th>一买低点</th><th>当前状态</th><th>二买日</th><th>出圈原因</th><th>操作</th></tr></thead>
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="first_buy_date" data-type="date">一买日</th><th data-key="first_buy_price" data-type="num">一买价</th><th data-key="first_buy_low" data-type="num">一买低点</th><th data-key="state" data-type="text">当前状态</th><th data-key="second_buy_date" data-fallback="first_buy_date" data-type="date">二买日</th><th data-key="exit_reason" data-type="text">出圈原因</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-watch" style="display:none">关注圈为空：先在「市场扫描」启动扫描，或在「个股查询」分析个股</div>
@@ -189,11 +255,13 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   <section class="tab" id="tab-pools">
     <div class="card">
       <div class="toolbar">
-        <span class="hint" id="pools-meta">三日买点池：最近 3 个交易日内触发的买点</span>
+        <span class="hint" id="pools-meta">三日买卖点池：最近 3 个交易日内触发的买点与卖点</span>
         <button class="ghost" id="btn-pools-refresh">刷新</button>
       </div>
       <div class="hint" style="margin-bottom:8px">
-        口径：取本地 K 线缓存中<b>最近 3 个交易日</b>（非自然日）触发的买点，按类型分池。一买=背驰后入圈（入场券）；二买=回调不破前低 + 力度衰减（机会提示）；三买=中枢后向上离开、回调不跌回中枢上沿。<br>
+        口径：取本地 K 线缓存中<b>最近 3 个交易日</b>（非自然日）触发的信号，按类型分池（当前为<b>日线</b>信号）。<br>
+        <b>买点</b>：一买=背驰后入圈（入场券）；二买=回调不破前低 + 力度衰减（机会提示）；三买=中枢后向上离开、回调不跌回中枢上沿。<br>
+        <b>卖点</b>：一卖=上涨段顶背驰（留意减仓）；二卖=反弹不创新高（顶部确认）。卖点仅作<b>持仓风险提示</b>，不参与选股与关注圈状态机。<br>
         注：同一次回调可能同时满足二买与三买定义（既未破一买低点、也未跌回中枢），此时会同时出现在两个池中。
       </div>
     </div>
@@ -201,7 +269,7 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       <h2>一买池 <span class="count" id="count-pool-first">0</span></h2>
       <div class="hint" style="margin-bottom:8px">背驰 + 一买成立 → 纳入关注圈等待二买</div>
       <table id="table-pool-first">
-        <thead><tr><th>代码</th><th>名称</th><th>信号日</th><th>信号价</th><th>背驰度</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">背驰度</th><th>状态</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-pool-first" style="display:none">近三日无一买信号</div>
@@ -210,7 +278,7 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       <h2>二买池 <span class="count" id="count-pool-second">0</span></h2>
       <div class="hint" style="margin-bottom:8px">一买后回调不破前低 + 力度衰减 → 机会提示</div>
       <table id="table-pool-second">
-        <thead><tr><th>代码</th><th>名称</th><th>信号日</th><th>信号价</th><th>回调衰减</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">回调衰减</th><th>状态</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-pool-second" style="display:none">近三日无二买信号</div>
@@ -219,10 +287,28 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       <h2>三买池 <span class="count" id="count-pool-third">0</span></h2>
       <div class="hint" style="margin-bottom:8px">中枢后向上离开，回调不跌回中枢上沿 → 三买成立</div>
       <table id="table-pool-third">
-        <thead><tr><th>代码</th><th>名称</th><th>信号日</th><th>信号价</th><th>力度衰减</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">力度衰减</th><th>状态</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-pool-third" style="display:none">近三日无三买信号</div>
+    </div>
+    <div class="card">
+      <h2>一卖风险 <span class="count" id="count-pool-first-sell">0</span></h2>
+      <div class="hint" style="margin-bottom:8px">上涨段出现顶背驰 → 一卖成立，持仓可留意减仓（不参与选股）</div>
+      <table id="table-pool-first-sell">
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">顶背驰度</th><th>类型</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty" id="empty-pool-first-sell" style="display:none">近三日无一卖信号<br><span class="hint">若刚从旧版本升级，历史信号里没有卖点记录，需重新执行一次市场扫描才会生成</span></div>
+    </div>
+    <div class="card">
+      <h2>二卖风险 <span class="count" id="count-pool-second-sell">0</span></h2>
+      <div class="hint" style="margin-bottom:8px">一卖后反弹不创新高 + 力度衰减 → 二卖成立，顶部确认</div>
+      <table id="table-pool-second-sell">
+        <thead><tr><th data-key="symbol" data-type="text">代码</th><th data-key="name" data-type="text">名称</th><th data-key="date" data-fallback="trade_date" data-type="date">信号日</th><th data-key="price" data-type="num">信号价</th><th data-key="score" data-type="num">反弹衰减</th><th>类型</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty" id="empty-pool-second-sell" style="display:none">近三日无二卖信号<br><span class="hint">二卖需要先有一卖：反弹未能创新高且力度衰减时才会触发</span></div>
     </div>
   </section>
 </main>
@@ -237,15 +323,34 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
 <script>
 const API = {
   health: '/api/health',
-  analyze: (s, refresh) => `/api/analyze?symbol=${encodeURIComponent(s)}&refresh=${refresh ? 'true' : 'false'}`,
-  scanStart: '/api/market/scan?scope=hs300',
+  analyze: (s, refresh, period) =>
+    `/api/analyze?symbol=${encodeURIComponent(s)}&refresh=${refresh ? 'true' : 'false'}&period=${period || 'day'}`,
+  scanStart: (scope, force) => `/api/market/scan?scope=${scope || 'all'}&force=${force ? 'true' : 'false'}`,
   scanStatus: '/api/market/scan/status',
   candidates: '/api/market/candidates',
   pools: (days) => `/api/market/pools?days=${days}`,
+  risk: (days) => `/api/market/risk?days=${days}`,
   watchlist: '/api/watchlist',
+  watchlistStats: '/api/watchlist/stats',
+  watchlistRefresh: '/api/watchlist/refresh',
 };
 
-const state = { chart: null, pollTimer: null };
+// 周期说明：日线负责选股，分钟级别只做区间套确认 / 日内择时。
+// 分钟周期的可得根数由数据源决定且会波动（实测 80~150 根），所以文案不写死数字，
+// 真实根数与区间一律以下方结论面板里显示的为准。
+const MINUTE_NOTE =
+  '级别 · 前复权 · 数据源仅保留约 1 个月的分钟数据（实际可得约 80~150 根，随行情波动）· 只用于区间套确认与日内择时，不参与选股、也不改变日线关注圈状态';
+
+const PERIOD_META = {
+  day: { label: '日线', note: '支持沪深A股票（sh/sz前缀）· 日线 · 前复权 · 近400根K线 · 选股主周期' },
+  m30: { label: '30分钟', note: '30分钟' + MINUTE_NOTE },
+  m15: { label: '15分钟', note: '15分钟' + MINUTE_NOTE },
+};
+
+const SELL_NAME = { FIRST_SELL: '一卖（顶背驰）', SECOND_SELL: '二卖（反弹不创新高）' };
+
+// nav：个股左右切换的上下文（来源列表 + 当前索引），手输代码时为 null
+const state = { chart: null, pollTimer: null, period: 'day', nav: null, analysis: null };
 
 function $(id) { return document.getElementById(id); }
 function toast(msg, ms = 2600) {
@@ -263,16 +368,30 @@ function fmt(v, digits = 2) {
   return Number.isFinite(num) ? num.toFixed(digits) : '—';
 }
 
+// 页签切换的唯一入口：导航按钮的高亮与区块的显示必须在这里一起改。
+// 早期版本的 bug 就出在「只给按钮加 active、不给区块加」，导致 CSS 把全部
+// 区块隐藏，页面打开是空白（数据其实已请求回来），必须点一次页签才显示。
+function switchTab(name) {
+  const found = document.querySelector(`nav button[data-tab="${name}"]`);
+  if (!found) return;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === found));
+  document.querySelectorAll('section.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + name));
+  if (name === 'watch') { loadWatchlist(); loadSuccessRate(); }
+  if (name === 'pools') loadPools();
+  if (name === 'market') loadSuccessRate();
+}
+
 document.querySelectorAll('nav button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('section.tab').forEach(s => s.classList.remove('active'));
-    btn.classList.add('active');
-    $('tab-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'watch') loadWatchlist();
-    if (btn.dataset.tab === 'pools') loadPools();
-  });
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
+
+// 初始化：以导航上标了 active 的按钮为准，若没有则退回第一个。
+// 与 HTML 里 <section id="tab-market" class="tab active"> 互为兜底。
+function activateDefaultTab() {
+  const btn = document.querySelector('nav button.active') || document.querySelector('nav button');
+  if (btn) switchTab(btn.dataset.tab);
+}
+activateDefaultTab();
 
 async function fetchJSON(url, options) {
   const resp = await fetch(url, options);
@@ -304,20 +423,69 @@ function stateTag(state) {
     WEAK_TRACK: ['weak', '弱跟踪'],
     OPPORTUNITY: ['opp', '机会已触发'],
     FAILED: ['fail', '一买失败'],
+    SECOND_BUY_FAILED: ['fail2', '二买失败'],
   };
   const [cls, label] = map[state] || ['weak', state];
   return `<span class="tag ${cls}">${label}</span>`;
 }
 
-function analyzeRowLink(symbol) {
-  return `<button class="ghost" onclick="analyzeFrom('${esc(symbol)}')">查看结构</button>`;
+// ---- 历史买点成功率：口径与后端 watchlist_stats 一一对应 ----
+async function loadSuccessRate() {
+  try {
+    renderSuccessRate(await fetchJSON(API.watchlistStats));
+  } catch (e) {
+    // 成功率是附属信息，取不到不该弹窗打断主流程，只留一个可见的空态
+    const kv = $('success-kv');
+    if (kv) kv.innerHTML = '<div class="item"><div class="k">加载失败</div><div class="v">—</div></div>';
+  }
 }
 
-window.analyzeFrom = function (symbol) {
+function renderSuccessRate(s) {
+  const f = s.first_buy || {}, d = s.second_buy || {}, w = s.watchlist || {};
+  const removed = w.removed || {};
+  if (s.wait_bars) $('wait-bars-note').textContent = s.wait_bars;
+  $('count-success').textContent = f.closed ? `一买样本 ${f.closed} 笔` : '样本不足';
+  const items = [
+    ['一买成功率', f.rate_label || '—',
+      `成功 ${f.success || 0}（引出二买）· 一买失败 ${f.failed || 0} · 弱跟踪 ${f.weak || 0} · 仍在待二买 ${f.pending || 0}`],
+    ['二买成功率', d.rate_label || '—',
+      `已确认二买 ${d.confirmed || 0} 笔 · 窗口内守住 ${d.success || 0} · 二买失败 ${d.failed || 0}`],
+    ['关注圈', `${w.active ?? 0} 只在圈`,
+      `已出圈 ${w.removed_total || 0} 只（一买失败 ${removed.FAILED || 0} · 二买失败 ${removed.SECOND_BUY_FAILED || 0}）`],
+  ];
+  $('success-kv').innerHTML = items.map(([k, v, sub]) =>
+    `<div class="item"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="sub">${esc(sub)}</div></div>`
+  ).join('');
+  const meta = $('watch-meta');
+  if (meta) {
+    meta.textContent = `在圈 ${w.active ?? 0} 只 · 已出圈 ${w.removed_total || 0} 只` +
+      `（一买失败 ${removed.FAILED || 0} · 二买失败 ${removed.SECOND_BUY_FAILED || 0}）` +
+      ` · 重评走本地 K 线缓存，不联网`;
+  }
+}
+
+function analyzeRowLink(symbol, tableId) {
+  // event.stopPropagation() 防止冒泡到行，否则一次点击会触发两次分析
+  return `<button class="ghost" onclick="event.stopPropagation(); analyzeFrom('${esc(symbol)}', '${esc(tableId || '')}')">查看结构</button>`;
+}
+
+window.analyzeFrom = function (symbol, tableId) {
   $('symbol-input').value = symbol;
-  document.querySelector('nav button[data-tab="stock"]').click();
+  setNavContext(tableId, symbol);
+  switchTab('stock');
   runAnalyze();
 };
+
+document.querySelectorAll('#period-switch button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#period-switch button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.period = btn.dataset.period;
+    const meta = PERIOD_META[state.period] || PERIOD_META.day;
+    $('period-note').textContent = meta.note;
+    if ($('symbol-input').value.trim()) runAnalyze();
+  });
+});
 
 async function loadCandidates() {
   try {
@@ -328,11 +496,13 @@ async function loadCandidates() {
     $('count-second').textContent = data.second_buy.length;
     const run = data.last_run;
     if (run) {
+      const statusText = { finished: '已完成', running: '进行中', interrupted: '已中断（可续跑）' }[run.status] || run.status;
       $('scan-meta').textContent =
-        `扫描范围：沪深300成分股 · 日线 · 前复权 | 上次: ${run.status === 'finished' ? '已完成' : '进行中'} ` +
-        `${run.processed}/${run.total} · 命中 ${data.first_buy.length + data.second_buy.length}`;
+        `扫描范围：${data.scope_label || '全部A股'} · 日线 · 前复权 | 上次: ${statusText} ` +
+        `${run.processed}/${run.total} · 命中 ${data.first_buy.length + data.second_buy.length}`
+        + (run.message ? ` · ${run.message}` : '');
       if (run.status === 'running') {
-        showProgress(run.processed, run.total);
+        showProgress(run.processed, run.total, run.message);
         $('badge-scan').textContent = `扫描: ${run.processed}/${run.total}`;
         $('badge-scan').className = 'badge warn';
         if (!state.pollTimer) state.pollTimer = setInterval(refreshScan, 4000);
@@ -349,34 +519,249 @@ async function loadCandidates() {
   }
 }
 
-function renderHitTable(tableId, emptyId, hits, tagClass, label) {
-  const tbody = $(tableId).querySelector('tbody');
-  const empty = $(emptyId);
-  if (!hits.length) {
+// ---- 表格排序：8 张表共用一个引擎 ----
+// 表头需声明 data-key（排序字段）与 data-type（date/num/text），可选 data-fallback
+// （主字段为空时的兜底字段，用于「二买日缺失则退回一买日」）。
+// 未声明 data-key 的列（状态/类型/操作）不参与排序。
+const TABLE_VIEWS = {};
+const ROW_LIMIT = 300;
+
+function sortValue(item, keys) {
+  for (const key of keys) {
+    const v = item[key];
+    if (v !== undefined && v !== null && v !== '' && v !== '—') return v;
+  }
+  return null;
+}
+
+function compareValues(a, b, type) {
+  if (type === 'num') {
+    const na = Number(a), nb = Number(b);
+    const badA = !Number.isFinite(na), badB = !Number.isFinite(nb);
+    if (badA && badB) return 0;
+    if (badA) return 1;
+    if (badB) return -1;
+    return na - nb;
+  }
+  // date 用默认字典序（YYYY-MM-DD 天然可比），text 走中文排序
+  return String(a).localeCompare(String(b), type === 'text' ? 'zh' : undefined);
+}
+
+function sortRows(rows, keys, type, dir) {
+  const factor = dir === 'asc' ? 1 : -1;
+  return rows.slice().sort((x, y) => {
+    const a = sortValue(x, keys), b = sortValue(y, keys);
+    // 空值恒排最后，不随升降序翻转 —— 否则降序时空值会霸占首屏
+    if (a === null && b === null) return 0;
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return compareValues(a, b, type) * factor;
+  });
+}
+
+function headerKeys(th) {
+  const keys = [th.dataset.key];
+  if (th.dataset.fallback) keys.push(th.dataset.fallback);
+  return keys;
+}
+
+function paintHeaders(tableId) {
+  const view = TABLE_VIEWS[tableId];
+  $(tableId).querySelectorAll('thead th').forEach(th => {
+    if (!th.dataset.key) return;
+    th.classList.add('sortable');
+    const active = th.dataset.key === view.key;
+    th.classList.toggle('sorted', active);
+    th.setAttribute('aria-sort', active ? (view.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+    // 首次渲染时把原标题存起来，避免箭头被重复拼接进去
+    if (!th.dataset.label) th.dataset.label = th.textContent.trim();
+    th.textContent = th.dataset.label + (active ? (view.dir === 'asc' ? ' ▲' : ' ▼') : '');
+  });
+}
+
+function paintTable(tableId) {
+  const view = TABLE_VIEWS[tableId];
+  if (!view) return;
+  const table = $(tableId);
+  const tbody = table.querySelector('tbody');
+  const empty = view.emptyId ? $(view.emptyId) : null;
+  if (!view.items.length) {
     tbody.innerHTML = '';
-    empty.style.display = 'block';
-    $(tableId).style.display = 'none';
+    if (empty) empty.style.display = 'block';
+    table.style.display = 'none';
     return;
   }
-  $(tableId).style.display = '';
-  empty.style.display = 'none';
-  tbody.innerHTML = hits.map(h => `
-    <tr class="clickable" onclick="analyzeFrom('${esc(h.symbol)}')">
+  table.style.display = '';
+  if (empty) empty.style.display = 'none';
+  const sorted = sortRows(view.items, view.keys, view.type, view.dir);
+  const shown = view.expanded ? sorted : sorted.slice(0, ROW_LIMIT);
+  const cols = table.querySelectorAll('thead th').length || 1;
+  let html = shown.map(view.rowHtml).join('');
+  const hidden = sorted.length - shown.length;
+  if (hidden > 0) {
+    html += `<tr class="more-row"><td colspan="${cols}"><button class="ghost" onclick="expandTable('${esc(tableId)}')">显示全部（还有 ${hidden} 条）</button></td></tr>`;
+  } else if (view.expanded && sorted.length > ROW_LIMIT) {
+    html += `<tr class="more-row"><td colspan="${cols}"><button class="ghost" onclick="collapseTable('${esc(tableId)}')">收起（仅显示前 ${ROW_LIMIT} 条）</button></td></tr>`;
+  }
+  tbody.innerHTML = html;
+  paintHeaders(tableId);
+}
+
+function bindSortHeaders(tableId) {
+  $(tableId).querySelectorAll('thead th').forEach(th => {
+    if (!th.dataset.key || th.dataset.bound === '1') return;
+    th.dataset.bound = '1';
+    th.addEventListener('click', () => {
+      const view = TABLE_VIEWS[tableId];
+      if (view.key === th.dataset.key) {
+        view.dir = view.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        view.key = th.dataset.key;
+        view.keys = headerKeys(th);
+        view.type = th.dataset.type || 'text';
+        // 文本列（代码/名称）默认升序更符合直觉，日期与数值默认降序（最新/最大在前）
+        view.dir = th.dataset.type === 'text' ? 'asc' : 'desc';
+      }
+      view.expanded = false;
+      paintTable(tableId);
+    });
+  });
+}
+
+function setTableItems(tableId, emptyId, items, rowHtml, defaultKey) {
+  const known = TABLE_VIEWS[tableId];
+  const view = known || { key: '', keys: [], type: 'date', dir: 'desc', expanded: false };
+  view.items = items || [];
+  view.rowHtml = rowHtml;
+  view.emptyId = emptyId;
+  TABLE_VIEWS[tableId] = view;
+  if (!known) {
+    const th = $(tableId).querySelector(`thead th[data-key="${defaultKey}"]`)
+      || $(tableId).querySelector('thead th[data-key]');
+    if (th) {
+      view.key = th.dataset.key;
+      view.keys = headerKeys(th);
+      view.type = th.dataset.type || 'date';
+    }
+  }
+  bindSortHeaders(tableId);
+  paintTable(tableId);
+}
+
+window.expandTable = function (tableId) {
+  if (TABLE_VIEWS[tableId]) { TABLE_VIEWS[tableId].expanded = true; paintTable(tableId); }
+};
+window.collapseTable = function (tableId) {
+  if (TABLE_VIEWS[tableId]) { TABLE_VIEWS[tableId].expanded = false; paintTable(tableId); }
+};
+
+// ---- 个股左右切换：沿用「从哪张表进来、当时按什么顺序排的」 ----
+const TABLE_LABELS = {
+  'table-first': '一买候选',
+  'table-second': '二买信号',
+  'table-watch': '关注圈',
+  'table-pool-first': '一买池',
+  'table-pool-second': '二买池',
+  'table-pool-third': '三买池',
+  'table-pool-first-sell': '一卖风险',
+  'table-pool-second-sell': '二卖风险',
+};
+const TABLE_TAB = {
+  'table-first': 'market',
+  'table-second': 'market',
+  'table-watch': 'watch',
+  'table-pool-first': 'pools',
+  'table-pool-second': 'pools',
+  'table-pool-third': 'pools',
+  'table-pool-first-sell': 'pools',
+  'table-pool-second-sell': 'pools',
+};
+
+function orderedSymbols(tableId) {
+  const view = TABLE_VIEWS[tableId];
+  if (!view || !view.items.length) return [];
+  // 按该表当前排序状态取顺序，保证切换顺序与用户看到的列表一致（含折叠前的全部行）
+  return sortRows(view.items, view.keys, view.type, view.dir).map(item => item.symbol);
+}
+
+function setNavContext(tableId, symbol) {
+  const symbols = tableId ? orderedSymbols(tableId) : [];
+  const index = symbols.indexOf(symbol);
+  state.nav = symbols.length && index >= 0
+    ? { tableId, symbols, index, label: TABLE_LABELS[tableId] || tableId }
+    : null;
+  renderNav();
+}
+
+function renderNav() {
+  const nav = state.nav;
+  const prev = $('btn-prev-stock'), next = $('btn-next-stock'), info = $('nav-info');
+  if (!nav) {
+    prev.disabled = true;
+    next.disabled = true;
+    info.textContent = '从列表点「查看结构」进入后，可在这里左右切换（← → 切换，Esc 返回列表）';
+    return;
+  }
+  prev.disabled = nav.index <= 0;
+  next.disabled = nav.index >= nav.symbols.length - 1;
+  info.textContent = `第 ${nav.index + 1}/${nav.symbols.length} 只 · 来源：${nav.label}`;
+}
+
+function stepStock(delta) {
+  const nav = state.nav;
+  if (!nav) { toast('当前没有可切换的列表：请从列表页点「查看结构」进入'); return; }
+  // 来源列表可能已被刷新，每次切换都重新取一次顺序并自愈
+  const symbols = orderedSymbols(nav.tableId);
+  if (!symbols.length) {
+    state.nav = null;
+    renderNav();
+    toast('来源列表已空，导航已重置');
+    return;
+  }
+  const current = symbols.indexOf(nav.symbols[nav.index]);
+  if (current < 0) {
+    state.nav = null;
+    renderNav();
+    toast('来源列表已刷新，导航已重置');
+    return;
+  }
+  const target = current + delta;
+  if (target < 0 || target >= symbols.length) return;
+  state.nav = { tableId: nav.tableId, symbols, index: target, label: TABLE_LABELS[nav.tableId] || nav.tableId };
+  renderNav();
+  $('symbol-input').value = symbols[target];
+  runAnalyze();
+}
+
+window.stepStock = stepStock;
+
+function syncNav(symbol) {
+  // 手动输入了别的代码时脱离列表导航；切换导致的调用则索引正好吻合，保持原状
+  const nav = state.nav;
+  if (!nav) { renderNav(); return; }
+  if (nav.symbols[nav.index] === symbol) { renderNav(); return; }
+  setNavContext(nav.tableId, symbol);
+}
+
+function renderHitTable(tableId, emptyId, hits, tagClass, label) {
+  setTableItems(tableId, emptyId, hits, h => `
+    <tr class="clickable" onclick="analyzeFrom('${esc(h.symbol)}', '${esc(tableId)}')">
       <td><b>${esc(h.symbol)}</b></td>
       <td>${esc(h.name || '—')}</td>
       <td>${esc(h.date || h.trade_date || '—')}</td>
       <td class="red">${fmt(h.price)}</td>
       <td>${fmt(h.score, 4)}</td>
       <td><span class="tag ${tagClass}">${label}</span></td>
-      <td>${analyzeRowLink(h.symbol)}</td>
-    </tr>`).join('');
+      <td>${analyzeRowLink(h.symbol, tableId)}</td>
+    </tr>`, 'date');
 }
 
-function showProgress(processed, total) {
+function showProgress(processed, total, message) {
   $('scan-progress-wrap').style.display = 'block';
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
   $('scan-progress-bar').style.width = pct + '%';
-  $('scan-message').textContent = `正在扫描 ${processed}/${total}（${pct}%）· 完成后自动刷新候选列表`;
+  $('scan-message').textContent =
+    `正在扫描 ${processed}/${total}（${pct}%）` + (message ? ` · ${message}` : '') + ' · 完成后自动刷新候选列表';
 }
 
 function hideProgress() {
@@ -384,12 +769,18 @@ function hideProgress() {
   $('scan-message').textContent = '';
 }
 
-async function startScan() {
-  const btn = $('btn-scan');
+async function startScan(scope) {
+  const key = scope === 'hs300' ? 'hs300' : 'all';
+  const btn = key === 'hs300' ? $('btn-scan-hs300') : $('btn-scan');
+  const force = $('scan-force').checked;
   btn.disabled = true;
   try {
-    const data = await fetchJSON(API.scanStart, { method: 'POST' });
-    toast(`扫描已启动，共 ${data.total} 只成分股`);
+    const data = await fetchJSON(API.scanStart(key, force), { method: 'POST' });
+    const note = force ? '（强制重取，全市场约需 30-50 分钟）' : '';
+    const u = data.universe || null;
+    const filtered = u && (u.excluded_bj || u.excluded_st)
+      ? `（数据源 ${u.total} 只，剔除北交所 ${u.excluded_bj} 只、ST ${u.excluded_st} 只）` : '';
+    toast(`扫描已启动：${data.scope_label || key} 共 ${data.total} 只${filtered}${note}`, 5000);
     if (state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = setInterval(refreshScan, 4000);
     refreshScan();
@@ -408,17 +799,9 @@ async function loadWatchlist() {
   try {
     const items = await fetchJSON(API.watchlist);
     $('count-watch').textContent = items.length;
-    const tbody = $('table-watch').querySelector('tbody');
-    if (!items.length) {
-      tbody.innerHTML = '';
-      $('empty-watch').style.display = 'block';
-      $('table-watch').style.display = 'none';
-      return;
-    }
-    $('table-watch').style.display = '';
-    $('empty-watch').style.display = 'none';
-    tbody.innerHTML = items.map(it => `
-      <tr class="clickable" onclick="analyzeFrom('${esc(it.symbol)}')">
+    // 默认按二买日降序；二买日为空的退回一买日（表头 data-fallback 已声明）
+    setTableItems('table-watch', 'empty-watch', items, it => `
+      <tr class="clickable" onclick="analyzeFrom('${esc(it.symbol)}', 'table-watch')">
         <td><b>${esc(it.symbol)}</b></td>
         <td>${esc(it.name || '—')}</td>
         <td>${esc(it.first_buy_date)}</td>
@@ -427,39 +810,64 @@ async function loadWatchlist() {
         <td>${stateTag(it.state)}</td>
         <td>${it.second_buy_date ? esc(it.second_buy_date) + ' / ' + fmt(it.second_buy_price) : '—'}</td>
         <td>${esc(it.exit_reason || '—')}</td>
-        <td>${analyzeRowLink(it.symbol)}</td>
-      </tr>`).join('');
+        <td>${analyzeRowLink(it.symbol, 'table-watch')}</td>
+      </tr>`, 'second_buy_date');
+    loadSuccessRate();
   } catch (e) {
     toast('加载关注圈失败: ' + e.message);
   }
 }
 
+async function refreshWatchlist() {
+  const btn = $('btn-watch-refresh');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = '重评中…';
+  try {
+    const r = await fetchJSON(API.watchlistRefresh, { method: 'POST' });
+    toast('关注圈重评完成：' + (r.message || `已重评 ${r.evaluated} 只`), 4200);
+  } catch (e) {
+    toast('重评失败: ' + e.message, 4200);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '重评关注圈';
+    loadWatchlist();
+  }
+}
+
 async function loadPools() {
   try {
-    const data = await fetchJSON(API.pools(3));
+    const [data, risk] = await Promise.all([fetchJSON(API.pools(3)), fetchJSON(API.risk(3))]);
     renderHitTable('table-pool-first', 'empty-pool-first', data.first_buy, 'first-buy', '一买');
     renderHitTable('table-pool-second', 'empty-pool-second', data.second_buy, 'second-buy', '二买');
     renderHitTable('table-pool-third', 'empty-pool-third', data.third_buy, 'third-buy', '三买');
+    renderHitTable('table-pool-first-sell', 'empty-pool-first-sell', risk.first_sell, 'first-sell', '一卖');
+    renderHitTable('table-pool-second-sell', 'empty-pool-second-sell', risk.second_sell, 'second-sell', '二卖');
     $('count-pool-first').textContent = data.first_buy.length;
     $('count-pool-second').textContent = data.second_buy.length;
     $('count-pool-third').textContent = data.third_buy.length;
+    $('count-pool-first-sell').textContent = risk.first_sell.length;
+    $('count-pool-second-sell').textContent = risk.second_sell.length;
     const dates = data.trading_dates || [];
+    const nSell = risk.first_sell.length + risk.second_sell.length;
     $('pools-meta').textContent = dates.length
-      ? `统计窗口：${dates[0]} ~ ${dates[dates.length - 1]}（共 ${dates.length} 个交易日）`
-      : `三日买点池：暂无交易日历（先执行市场扫描）`;
+      ? `统计窗口：${dates[0]} ~ ${dates[dates.length - 1]}（共 ${dates.length} 个交易日）· 买点 ${data.first_buy.length + data.second_buy.length + data.third_buy.length} 个 / 卖点 ${nSell} 个`
+      : `三日买卖点池：暂无交易日历（先执行市场扫描）`;
   } catch (e) {
-    toast('加载买点池失败: ' + e.message);
+    toast('加载买卖点池失败: ' + e.message);
   }
 }
 
 async function runAnalyze() {
   const symbol = $('symbol-input').value.trim();
   if (!symbol) { toast('请输入股票代码'); return; }
+  syncNav(symbol);
   const btn = $('btn-analyze');
   btn.disabled = true;
   btn.textContent = '分析中…';
   try {
-    const data = await fetchJSON(API.analyze(symbol, $('refresh-flag').checked));
+    const data = await fetchJSON(API.analyze(symbol, $('refresh-flag').checked, state.period));
+    state.analysis = data;
     renderVerdict(data);
     renderChart(data);
     renderSignalDetail(data);
@@ -474,52 +882,254 @@ async function runAnalyze() {
 
 function renderVerdict(data) {
   const box = $('verdict-box');
-  box.style.display = 'flex';
-  const a = data.analysis || {};
+  box.style.display = 'block';
   const KIND_LABEL = {
     FIRST_BUY: { icon: '🟡', desc: '一买信号：纳入关注圈，等待二买确认' },
     SECOND_BUY: { icon: '🟢', desc: '二买信号：机会提示（回调不破一买低点 + 力度衰减）' },
     THIRD_BUY: { icon: '🟣', desc: '三买信号：中枢后回调不破中枢上沿，趋势延续' },
   };
-  const latest = (a.signals || []).filter(s => KIND_LABEL[s.kind]).slice(-2);
-  if (data.qualifies) {
-    const newest = latest[latest.length - 1] || {};
-    const label = KIND_LABEL[newest.kind] || KIND_LABEL.FIRST_BUY;
-    box.className = 'verdict yes';
-    box.innerHTML = `
-      <div class="icon">${label.icon}</div>
-      <div>
-        <div class="title">${esc(data.name)}（${esc(data.symbol)}）— 符合条件</div>
-        <div class="sub">${label.desc}</div>
-      </div>`;
-  } else {
-    box.className = 'verdict no';
-    box.innerHTML = `
-      <div class="icon">⚪</div>
-      <div>
-        <div class="title">${esc(data.name)}（${esc(data.symbol)}）— 当前不符合</div>
-        <div class="sub">区间 ${esc(data.date_range.start)} ~ ${esc(data.date_range.end)}（${data.bars_count} 根K线）内未触发背驰一买 / 二买 / 三买条件</div>
-      </div>`;
+  const blocks = [];
+
+  // 风险提示块：只由卖点驱动，与「是否符合买入条件」互不影响。
+  if (data.risk_active) {
+    const sells = data.risk_signals || [];
+    const newest = sells[sells.length - 1] || {};
+    blocks.push(`
+      <div class="verdict risk">
+        <div class="icon">⚠️</div>
+        <div>
+          <div class="title">${esc(SELL_NAME[newest.kind] || newest.kind || '卖点')}成立 — 持仓风险提示</div>
+          <div class="sub">${esc(newest.date || '')} 于 ${fmt(newest.price)} 触发（${esc(data.period_label || '')}）· ${esc(newest.message || '')} · 卖点不参与选股判定</div>
+        </div>
+      </div>`);
   }
+
+  // 分钟级别时补一条「日线背景」，供人工判断级别联立（数据源只给约 9 个交易日
+  // 分钟数据，严格的跨周期时序共振几乎必然为空，所以只做同向性参考）。
+  const dc = data.daily_context;
+  if (state.period !== 'day' && dc) {
+    blocks.push(
+      dc.available
+        ? `<div class="verdict info">
+        <div class="icon">🧭</div>
+        <div>
+          <div class="title">日线背景：最新信号为 ${esc(dc.kind_label || dc.kind)}（${esc(dc.date)} @ ${fmt(dc.price)}）</div>
+          <div class="sub">${dc.is_buy ? '日线偏多' : '日线偏空'} · 分钟级别与日线同向时级别联立更强，反向时仅视为反弹/回调 · ${esc(dc.message || '')}</div>
+        </div>
+      </div>`
+        : `<div class="verdict info">
+        <div class="icon">🧭</div>
+        <div>
+          <div class="title">日线背景：暂缺</div>
+          <div class="sub">${esc(dc.message || '')}</div>
+        </div>
+      </div>`,
+    );
+  }
+
+  const buys = data.buy_signals || [];
+  const newestBuy = buys[buys.length - 1] || {};
+
+  // 该股自身的历史成功率：这是「这只票我一买成功率几何」的直接回答，
+  // 与市场页那个全市场口径不同，样本不足时只给明细不给百分比。
+  const ssr = data.symbol_success_rate;
+  if (ssr && ssr.available) {
+    const row = (label, stat) => {
+      if (!stat || !stat.total) return '';
+      const rate = stat.insufficient
+        ? `<span class="dim">样本不足（${stat.closed}/${stat.total} 次）</span>`
+        : `<b>${esc(stat.rate_label)}</b>`;
+      const recent = (stat.detail || []).slice(0, 4).map(d =>
+        `<span class="chip ${d.success ? 'ok' : d.success === null ? '' : 'bad'}">${esc(d.date)} ${esc(d.result_label)}</span>`
+      ).join('');
+      return `
+        <div class="ssr-row">
+          <div class="ssr-k">${label}</div>
+          <div class="ssr-v">${rate}</div>
+          <div class="ssr-sub">成功 ${stat.success} / 已决 ${stat.closed} · ${esc(stat.success_label)}</div>
+          <div class="ssr-hist">${recent}</div>
+        </div>`;
+    };
+    blocks.push(`
+      <div class="verdict info">
+        <div class="icon">📈</div>
+        <div style="flex:1">
+          <div class="title">${esc(ssr.name || data.name)} 历史买点成功率（${esc(ssr.period_label || '')}，逐次信号统计）</div>
+          <div class="ssr-grid">
+            ${row('一买成功率', ssr.first_buy)}
+            ${row('二买成功率', ssr.second_buy)}
+          </div>
+          <div class="sub">一买以「之后 ${ssr.wait_bars} 根K线内是否引出二买」计；二买以「是否守住二买低点」计。
+          ${ssr.min_sample ? `历史不足 ${ssr.min_sample} 次只给明细不给百分比。` : ''}</div>
+        </div>
+      </div>`);
+  } else if (ssr && !ssr.available && state.period === 'day') {
+    blocks.push(`
+      <div class="verdict info">
+        <div class="icon">📈</div>
+        <div>
+          <div class="title">该股暂无历史买点记录</div>
+          <div class="sub">${esc(ssr.message || '')} · 首次出现买点后才开始累积</div>
+        </div>
+      </div>`);
+  }
+
+  if (data.qualifies) {
+    const label = KIND_LABEL[newestBuy.kind] || KIND_LABEL.FIRST_BUY;
+    blocks.push(`
+      <div class="verdict yes">
+        <div class="icon">${label.icon}</div>
+        <div>
+          <div class="title">${esc(data.name)}（${esc(data.symbol)}）— 符合买入条件（${esc(data.period_label || '')}）</div>
+          <div class="sub">${label.desc}${newestBuy.date ? ' · 最近信号 ' + esc(newestBuy.date) + ' @ ' + fmt(newestBuy.price) : ''}</div>
+        </div>
+      </div>`);
+  } else {
+    const extra = state.period === 'day'
+      ? ''
+      : '（分钟级别不参与选股，请切换到日线查看是否符合买入条件）';
+    blocks.push(`
+      <div class="verdict no">
+        <div class="icon">⚪</div>
+        <div>
+          <div class="title">${esc(data.name)}（${esc(data.symbol)}）— 当前不符合买入条件（${esc(data.period_label || '')}）</div>
+          <div class="sub">区间 ${esc(data.date_range.start)} ~ ${esc(data.date_range.end)}（${data.bars_count} 根K线）内未触发背驰一买 / 二买 / 三买条件${extra}</div>
+        </div>
+      </div>`);
+  }
+  box.innerHTML = blocks.join('');
 }
 
 function renderSignalDetail(data) {
   const a = data.analysis || {};
-  const KIND_NAME = { FIRST_BUY: '一买（入圈）', SECOND_BUY: '二买（机会）', THIRD_BUY: '三买（趋势延续）' };
+  const KIND_NAME = {
+    FIRST_BUY: '一买（入圈）',
+    SECOND_BUY: '二买（机会）',
+    THIRD_BUY: '三买（趋势延续）',
+    FIRST_SELL: '一卖（顶背驰·风险）',
+    SECOND_SELL: '二卖（反弹不创新高·风险）',
+  };
   const signals = (a.signals || []).filter(s => KIND_NAME[s.kind]);
   const box = $('signal-detail');
-  if (!signals.length) { box.style.display = 'none'; return; }
+  if (!signals.length) {
+    // 必须清空：否则切到无信号的周期后，面板虽隐藏，DOM 里仍留着上一周期的内容
+    $('signal-meta').innerHTML = '';
+    box.style.display = 'none';
+    return;
+  }
   box.style.display = 'block';
   const newest = signals[signals.length - 1];
   const meta = newest.meta || {};
+  const isSell = newest.kind === 'FIRST_SELL' || newest.kind === 'SECOND_SELL';
+  // previous_segment / current_segment 是坐标对象，直接 fmt 只会得到「—」，
+  // 刷掉即可（图上也已经画出来了）
+  const scalarMeta = Object.entries(meta).filter(([, v]) => v === null || typeof v !== 'object');
   const rows = [
+    ['周期', (PERIOD_META[data.period] || {}).label || data.period],
     ['信号类型', KIND_NAME[newest.kind] || newest.kind],
     ['信号日期', newest.date],
     ['信号价', fmt(newest.price)],
-    ['锚定低点', fmt(newest.anchor_price)],
-    ...Object.entries(meta).map(([k, v]) => [k, fmt(v, 4)]),
+    [isSell ? '顶部锚定价' : '锚定低点', fmt(newest.anchor_price)],
+    ...scalarMeta.map(([k, v]) => [k, fmt(v, 4)]),
   ];
   $('signal-meta').innerHTML = rows.map(([k, v]) => `<div class="m"><b>${esc(k)}</b>: ${esc(v)}</div>`).join('');
+}
+
+// ---- 背驰段：把「前段力度」与「背驰段」两段笔原样描出来 ----
+// 口径与引擎一致：一买/一卖比两个相隔一段反向笔的同向段；
+// 二买/三买/二卖比「离开段 vs 紧接其后的回调段」。
+const DIVERGENCE_COLOR = {
+  FIRST_BUY: '#f0b429',
+  SECOND_BUY: '#3fb950',
+  THIRD_BUY: '#a371f7',
+  FIRST_SELL: '#ff7d6b',
+  SECOND_SELL: '#ff4d4f',
+};
+const DIVERGENCE_LABEL = {
+  FIRST_BUY: '一买背驰',
+  SECOND_BUY: '二买回调',
+  THIRD_BUY: '三买回调',
+  FIRST_SELL: '一卖背驰',
+  SECOND_SELL: '二卖反弹',
+};
+// 每种信号把力度放在不同的 meta 键里，这里统一映射到「前段 / 背驰段」
+const EFFORT_KEYS = {
+  FIRST_BUY: ['previous_effort', 'current_effort'],
+  FIRST_SELL: ['previous_effort', 'current_effort'],
+  SECOND_BUY: ['up_effort', 'pullback_effort'],
+  SECOND_SELL: ['down_effort', 'rebound_effort'],
+  THIRD_BUY: ['breakout_effort', 'pullback_effort'],
+};
+
+function divergenceSegments(signals) {
+  // 老库里没有 previous_segment / current_segment，判空跳过，
+  // 不能因为缺字段把整张图带崩。
+  return (signals || []).filter(
+    s => DIVERGENCE_COLOR[s.kind] && s.meta && s.meta.previous_segment && s.meta.current_segment
+  );
+}
+
+function effortValue(meta, key) {
+  if (!key) return null;
+  const v = meta[key];
+  if (v === null || v === undefined || v === '') return null;
+  const num = Number(v);
+  return Number.isFinite(num) ? num : null;
+}
+
+// 段口径的力度直接挂在 segment.area 上（见 structure.leg_meta）
+function effortOfSegment(segment) {
+  if (!segment || segment.area === undefined || segment.area === null) return null;
+  const num = Number(segment.area);
+  return Number.isFinite(num) ? num : null;
+}
+
+function segmentSeries(segment, text, color, name, dashed) {
+  const down = segment.direction === 'down';
+  return {
+    name,
+    type: 'line',
+    data: [
+      { value: [segment.start_index, segment.start_price] },
+      { value: [segment.end_index, segment.end_price], label: { show: true, formatter: text, color, position: down ? 'bottom' : 'top', fontSize: 10 } },
+    ],
+    showSymbol: true,
+    symbol: 'circle',
+    symbolSize: 5,
+    lineStyle: { color, width: dashed ? 1.5 : 2.2, type: dashed ? 'dashed' : 'solid' },
+    itemStyle: { color },
+    z: 9,
+  };
+}
+
+function effortText(effort) {
+  return effort === null ? '' : `力度 ${effort.toFixed(2)}`;
+}
+
+function buildDivergenceSeries(signals) {
+  const list = divergenceSegments(signals);
+  if (!list.length) return [];
+  // 默认只描最近一个信号的背驰段：全画会让图面被线段糊满；
+  // 勾了「显示全部背驰段」才全出（勾选状态由 renderChart 读取）。
+  const picked = $('divergence-all') && $('divergence-all').checked ? list : list.slice(-1);
+  const multi = picked.length > 1;
+  const series = [];
+  picked.forEach(signal => {
+    const color = DIVERGENCE_COLOR[signal.kind];
+    const label = DIVERGENCE_LABEL[signal.kind] || signal.kind;
+    // 段口径（p152 原文层级）的 meta 把力度直接放在 segment.area 里，
+    // 笔口径则散在 previous_effort / up_effort 等固定键上——两条路径都要支持。
+    const prevSegEffort = signal.meta.previous_segment ? effortOfSegment(signal.meta.previous_segment) : null;
+    const currSegEffort = signal.meta.current_segment ? effortOfSegment(signal.meta.current_segment) : null;
+    const keys = EFFORT_KEYS[signal.kind] || [];
+    const prevEffort = prevSegEffort !== null ? prevSegEffort : effortValue(signal.meta, keys[0]);
+    const currEffort = currSegEffort !== null ? currSegEffort : effortValue(signal.meta, keys[1]);
+    // 多信号时仅靠颜色分不清是哪一笔，端点标签带上信号类型
+    const prefix = multi ? `${label} · ` : '';
+    series.push(segmentSeries(signal.meta.previous_segment, `${prefix}背驰前段 ${effortText(prevEffort)}`.trim(), '#9aa4b0', '背驰前段', true));
+    series.push(segmentSeries(signal.meta.current_segment, `${prefix}背驰段 ${effortText(currEffort)}`.trim(), color, '背驰段', false));
+  });
+  return series;
 }
 
 function renderChart(data) {
@@ -542,6 +1152,28 @@ function renderChart(data) {
   const buys = (a.signals || []).filter(s => s.kind === 'FIRST_BUY');
   const secondBuys = (a.signals || []).filter(s => s.kind === 'SECOND_BUY');
   const thirdBuys = (a.signals || []).filter(s => s.kind === 'THIRD_BUY');
+  const firstSells = (a.signals || []).filter(s => s.kind === 'FIRST_SELL');
+  const secondSells = (a.signals || []).filter(s => s.kind === 'SECOND_SELL');
+
+  // 卖点标注「关键点位」而不是确认 K 线：锚点 anchor_index/anchor_price 指向
+  // 顶分型（一卖）或反弹高点（二卖），信号本身在下一根 K 线才成立（不用未来函数）。
+  // 用固定像素偏移而非价格比例，箭头才会紧贴高点，不随 y 轴区间飘走。
+  const sellArrow = (s, label, color, offsetY) => {
+    const idx = s.anchor_index ?? s.bar_index;
+    const price = s.anchor_price ?? s.price;
+    return {
+      value: [idx, price],
+      symbolOffset: [0, offsetY],
+      itemStyle: { color },
+      label: {
+        show: true,
+        formatter: `${label} ${fmt(price)}`,
+        color,
+        position: 'top',
+        fontSize: 11,
+      },
+    };
+  };
 
   const markAreas = (a.zhongshu || []).slice(-6).map(z => [
     { xAxis: z.start_index, yAxis: z.zd, itemStyle: { color: 'rgba(137,87,229,.12)' } },
@@ -562,14 +1194,36 @@ function renderChart(data) {
     { name: '一买', type: 'scatter', data: buys.map(s => { const p = { value: [s.bar_index, s.price * 1.02], label: { show: true, formatter: '一买', color: '#f0b429', position: 'bottom' } }; return p; }), symbol: 'pin', symbolSize: 46, itemStyle: { color: 'rgba(240,180,41,.85)' } },
     { name: '二买', type: 'scatter', data: secondBuys.map(s => ({ value: [s.bar_index, s.price * 1.02], label: { show: true, formatter: '二买', color: '#fff', position: 'bottom' } })), symbol: 'pin', symbolSize: 46, itemStyle: { color: 'rgba(63,185,80,.9)' } },
     { name: '三买', type: 'scatter', data: thirdBuys.map(s => ({ value: [s.bar_index, s.price * 1.04], label: { show: true, formatter: '三买', color: '#fff', position: 'bottom' } })), symbol: 'pin', symbolSize: 46, itemStyle: { color: 'rgba(163,113,247,.9)' } },
+    {
+      name: '一卖',
+      type: 'scatter',
+      data: firstSells.map(s => sellArrow(s, '一卖', '#ff7d6b', -20)),
+      symbol: 'arrow',
+      symbolRotate: 180,
+      symbolSize: 16,
+      z: 12,
+    },
+    {
+      name: '二卖',
+      type: 'scatter',
+      data: secondSells.map(s => sellArrow(s, '二卖', '#ff4d4f', -42)),
+      symbol: 'arrow',
+      symbolRotate: 180,
+      symbolSize: 16,
+      z: 12,
+    },
     { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes },
+    ...buildDivergenceSeries(a.signals),
   ];
 
   if (!state.chart) state.chart = echarts.init($('chart'));
   state.chart.setOption({
     backgroundColor: 'transparent',
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    legend: { data: ['K线', '笔', '顶分型', '底分型', '一买', '二买', '三买'], textStyle: { color: '#8b949e' } },
+    legend: {
+      data: ['K线', '笔', '顶分型', '底分型', '一买', '二买', '三买', '一卖', '二卖', '背驰前段', '背驰段'],
+      textStyle: { color: '#8b949e' },
+    },
     grid: [
       { left: '8%', right: '3%', top: '8%', height: '60%' },
       { left: '8%', right: '3%', top: '76%', height: '16%' },
@@ -591,14 +1245,36 @@ function renderChart(data) {
   window.addEventListener('resize', () => state.chart && state.chart.resize());
 }
 
-$('btn-scan').addEventListener('click', startScan);
+$('btn-scan').addEventListener('click', () => startScan('all'));
+$('btn-scan-hs300').addEventListener('click', () => startScan('hs300'));
 $('btn-pools-refresh').addEventListener('click', loadPools);
 $('btn-analyze').addEventListener('click', runAnalyze);
+$('btn-watch-refresh').addEventListener('click', refreshWatchlist);
+// 背驰段「显示全部」开关：切换后按上一次的分析结果重画，不重新请求接口
+$('divergence-all').addEventListener('change', () => {
+  if (state.analysis) renderChart(state.analysis);
+});
 $('symbol-input').addEventListener('keydown', e => { if (e.key === 'Enter') runAnalyze(); });
+$('symbol-input').addEventListener('input', () => { state.nav = null; renderNav(); });
+$('btn-prev-stock').addEventListener('click', () => stepStock(-1));
+$('btn-next-stock').addEventListener('click', () => stepStock(1));
+
+// 个股页键盘：← → 切换，Esc 返回来源列表
+document.addEventListener('keydown', e => {
+  const active = document.activeElement;
+  if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+  const section = document.querySelector('section.tab.active');
+  if (!section || section.id !== 'tab-stock') return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); stepStock(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); stepStock(1); }
+  else if (e.key === 'Escape' && state.nav) { e.preventDefault(); switchTab(TABLE_TAB[state.nav.tableId] || 'market'); }
+});
 
 checkHealth();
+renderNav();
 loadCandidates();
 loadPools();
+loadSuccessRate();
 setInterval(checkHealth, 30000);
 </script>
 </body>

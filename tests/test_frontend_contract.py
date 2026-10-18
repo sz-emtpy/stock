@@ -283,6 +283,13 @@ class DivergenceSegmentContractTest(unittest.TestCase):
         # previous_segment 是坐标对象，fmt 只会得到「—」，直接刷掉
         self.assertIn("typeof v !== 'object'", self.html)
 
+    def test_signal_detail_separates_rule_evidence_and_statistical_scores(self) -> None:
+        self.assertIn("规则依据", self.html)
+        self.assertIn("规则未满足", self.html)
+        self.assertIn("结构口径", self.html)
+        self.assertIn("未完成严格次级别走势类型递归验证", self.html)
+        self.assertIn("不等同于历史胜率或未来胜算", self.html)
+
 
 class PoolRateAndChartContractTest(unittest.TestCase):
     """买卖点池胜算列 + 个股对比条 + K 线 tooltip 涨跌幅 的前端契约。

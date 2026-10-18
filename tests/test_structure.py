@@ -443,6 +443,33 @@ class EngineStructureContractTest(unittest.TestCase):
         result, _ = self._scan(use_canonical_zhongshu=False), None
         self.assertIsInstance(result.zhongshu, list)
 
+    # ---- 一买锚点：索引与极值价格必须来自同一根 K 线 ----
+
+    def test_first_buy_anchor_points_to_actual_leg_low_bar(self) -> None:
+        from chanpicker.core import Zhongshu
+        from chanpicker.effort import Effort
+
+        bars = self._bars(extra_close=90.0)
+        legs = [
+            TrendLeg(5, 8, high=100.0, low=95.0, open_price=100.0, close_price=96.0),
+            TrendLeg(9, 12, high=99.0, low=90.0, open_price=96.0, close_price=94.0),
+        ]
+        bars[10] = type(bars[10])(
+            symbol="sh600000", date=bars[10].date, open=94.0, high=96.0,
+            low=89.0, close=94.0, volume=1_000_000, amount=94_000_000,
+        )
+        engine = self._engine(bars, use_ma_system=False)
+        engine._leg_divergence_meta = lambda previous, current: (True, {"divergence_detail": {"standard": True, "score": 0.8}})
+        engine._leg_effort = lambda leg, left, right: Effort(
+            direction=leg.direction, start_index=left, end_index=right, macd_area=1.0,
+            macd_piece_area=1.0, peak_area=1.0,
+            dif_extreme=-1.0, dea_extreme=-1.0, ma_extreme=0.0,
+        )
+        signals = engine._detect_first_buy_by_legs(bars, legs, [Zhongshu(0, 4, 92.0, 98.0)])
+        self.assertTrue(signals)
+        self.assertEqual(signals[0].anchor_index, 10)
+        self.assertEqual(signals[0].anchor_price, bars[10].low)
+
     # ---- 二买：p152「第一次次级别回调」+ 不破一买低点 ----
 
     def _second_buy_legs(self, pullback_low: float):
@@ -490,6 +517,23 @@ class EngineStructureContractTest(unittest.TestCase):
             bars, self._second_buy_legs(pullback_low=95.5), [first_buy]
         )
         self.assertEqual(len(accepted), 1, "回调不破一买低点却没被判为二买")
+
+    def test_second_buy_rule_uses_first_buy_index_not_price(self) -> None:
+        """均线体位判定读索引；一买价格必须独立用于低点保持判断。"""
+
+        from unittest.mock import Mock
+
+        bars = self._bars(extra_close=96.0)
+        engine = self._engine(bars)
+        tracker = Mock()
+        engine._ma_tracker = tracker
+        engine._closes = [bar.close for bar in bars]
+        # 直接 mock 规则入口验证包装器传参契约
+        from unittest.mock import patch
+        with patch("chanpicker.core.judge_second_buy") as judge:
+            engine._judge_second_buy_rule(12, first_buy_index=9, first_buy_low=94.0)
+        self.assertEqual(judge.call_args.kwargs["first_buy_index"], 9)
+        self.assertTrue(judge.call_args.kwargs["holds_first_buy_low"])
 
     def test_second_buy_takes_the_first_adjacent_segment(self) -> None:
         """p152「**第一次**次级别回调」：只能取紧邻的那个反向段。
@@ -747,7 +791,13 @@ class EngineStructureContractTest(unittest.TestCase):
         padded = bars + [
             self._bar_at("sh600000", "2024-11", 1 + i, price_close=zg + 6.0) for i in range(20)
         ]
-        engine = self._engine(padded)
+        from chanpicker.effort import Effort
+
+        engine = self._engine(padded, min_third_buy_score=-1.0)
+        engine._leg_effort = lambda leg, left, right: Effort(
+            direction=leg.direction, start_index=left, end_index=right, macd_area=1.0,
+            macd_piece_area=1.0, peak_area=1.0, dif_extreme=0.0, dea_extreme=0.0, ma_extreme=0.0,
+        )
         signals = engine._detect_third_buy_by_legs(padded, crafted, [center])
         self.assertTrue(signals, "紧邻回调不破 ZG 却没被判为三买")
         pullback = signals[-1].meta["current_segment"]
@@ -756,6 +806,45 @@ class EngineStructureContractTest(unittest.TestCase):
             "取的不是紧邻的第一次回抽段（p590）",
         )
 
+
+    def test_third_buy_allows_first_pullback_high_at_or_above_breakout_high(self) -> None:
+        """p208 只约束回抽低点守住 ZG，不额外要求回抽高点低于离开高点。"""
+
+        from chanpicker.core import Zhongshu
+        from chanpicker.effort import Effort
+
+        bars = self._bars(extra_close=110.0)
+        center = Zhongshu(start_index=0, end_index=5, zd=80.0, zg=90.0)
+        legs = [
+            TrendLeg(6, 8, high=105.0, low=91.0, open_price=91.0, close_price=105.0),
+            TrendLeg(9, 11, high=106.0, low=92.0, open_price=106.0, close_price=95.0),
+        ]
+        engine = self._engine(bars)
+        engine._leg_effort = lambda leg, left, right: Effort(
+            direction=leg.direction, start_index=left, end_index=right, macd_area=1.0,
+            macd_piece_area=1.0, peak_area=1.0, dif_extreme=0.0, dea_extreme=0.0, ma_extreme=0.0,
+        )
+        signals = engine._detect_third_buy_by_legs(bars, legs, [center])
+        self.assertEqual(len(signals), 1)
+        self.assertGreaterEqual(
+            signals[0].meta["current_segment"]["high"],
+            signals[0].meta["breakout_high"],
+        )
+        self.assertEqual(signals[0].meta["zhongshu_zg"], 90.0)
+
+    def test_third_buy_respects_configured_effort_threshold(self) -> None:
+        """段级路径也必须应用 min_third_buy_score，与旧笔级路径保持一致。"""
+
+        from chanpicker.core import Zhongshu
+
+        bars = self._bars(extra_close=110.0)
+        center = Zhongshu(start_index=0, end_index=5, zd=80.0, zg=90.0)
+        legs = [
+            TrendLeg(6, 8, high=105.0, low=91.0, open_price=91.0, close_price=105.0),
+            TrendLeg(9, 11, high=106.0, low=92.0, open_price=106.0, close_price=95.0),
+        ]
+        engine = self._engine(bars, min_third_buy_score=1.0)
+        self.assertEqual(engine._detect_third_buy_by_legs(bars, legs, [center]), [])
 
     def test_third_buy_rejects_pullback_breaking_center_zg(self) -> None:
         """p208 定理：回调低点**跌破 ZG** 就不是三买（反向对照）。

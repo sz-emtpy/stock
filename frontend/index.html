@@ -2241,13 +2241,25 @@ function renderSignalDetail(data) {
   // previous_segment / current_segment 是坐标对象，直接 fmt 只会得到「—」，
   // 刷掉即可（图上也已经画出来了）
   const scalarMeta = Object.entries(meta).filter(([, v]) => v === null || typeof v !== 'object');
+  const ruleDetails = [
+    ...(Array.isArray(meta.rule_reasons) ? meta.rule_reasons.map(reason => ['规则依据', reason]) : []),
+    ...(Array.isArray(meta.rule_violations) ? meta.rule_violations.map(reason => ['规则未满足', reason]) : []),
+  ];
+  const structureLabel = meta.structure_level === 'leg'
+    ? '段级固定K线切片近似；未完成严格次级别走势类型递归验证'
+    : (meta.structure_level || '历史记录未标注');
   const rows = [
     ['周期', (PERIOD_META[data.period] || {}).label || data.period],
     ['信号类型', KIND_NAME[newest.kind] || newest.kind],
     ['信号日期', newest.date],
     ['信号价', fmt(newest.price)],
     [isSell ? '顶部锚定价' : '锚定低点', fmt(newest.anchor_price)],
-    ...scalarMeta.map(([k, v]) => [k, fmt(v, 4)]),
+    ['结构口径', structureLabel],
+    ...ruleDetails,
+    ...scalarMeta.filter(([k]) => !['structure_level', 'rule_kind', 'rule_satisfied', 'rule_position', 'rule_kiss_index'].includes(k))
+      .map(([k, v]) => [k, fmt(v, 4)]),
+    ...(meta.rule_satisfied !== undefined ? [['均线规则判定', meta.rule_satisfied ? '满足' : '未满足（若配置为宽松模式，信号仍可能保留）']] : []),
+    ['分数说明', '信号力度分/体系分用于排序参考，不等同于历史胜率或未来胜算'],
   ];
   $('signal-meta').innerHTML = rows.map(([k, v]) => `<div class="m"><b>${esc(k)}</b>: ${esc(v)}</div>`).join('');
 }

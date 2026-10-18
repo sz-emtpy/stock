@@ -584,8 +584,10 @@ class ChanEngine:
             min_kisses=self.config.ma_min_male_kisses,
         )
 
-    def _judge_second_buy_rule(self, pullback_low_index: int, first_buy_low: float):
-        """按 p98 判定二买是否满足「女上位第一吻后出现的下跌」。"""
+    def _judge_second_buy_rule(
+        self, pullback_low_index: int, first_buy_index: int, first_buy_low: float
+    ):
+        """按 p98 判定二买；均线位置使用索引，破位判断使用一买低点价格。"""
 
         tracker = self._ma_tracker
         if tracker is None:
@@ -593,7 +595,7 @@ class ChanEngine:
         close_at = self._closes[pullback_low_index]
         return judge_second_buy(
             tracker,
-            first_buy_index=first_buy_low,
+            first_buy_index=first_buy_index,
             pullback_low_index=pullback_low_index,
             holds_first_buy_low=close_at > first_buy_low,
         )
@@ -641,8 +643,9 @@ class ChanEngine:
                 continue
 
             # 缠论原文之道（p98）：「男上位最后一吻后出现的背驰式下跌构成」
+            low_index = self._leg_low_index(current, ordered)
             rule = self._judge_first_buy_rule(
-                confirmation_index, current.end_index, below_center
+                confirmation_index, low_index, below_center
             )
             if rule is not None and not rule.satisfied and self.config.enforce_ma_rules:
                 continue
@@ -655,8 +658,8 @@ class ChanEngine:
                     date=confirmation.date,
                     bar_index=confirmation_index,
                     price=confirmation.close,
-                    anchor_index=current.end_index,
-                    anchor_price=current.low,
+                    anchor_index=low_index,
+                    anchor_price=ordered[low_index].low,
                     message="下跌走势背驰后一买成立，纳入关注圈并等待二买确认",
                     meta={
                         **divergence_meta,
@@ -713,6 +716,7 @@ class ChanEngine:
             # 缠论原文之道（p98）：二买是「女上位第一吻后出现的下跌」
             rule = self._judge_second_buy_rule(
                 pullback_low_index=self._leg_low_index(pullback, ordered),
+                first_buy_index=first_buy.anchor_index,
                 first_buy_low=first_buy.anchor_price,
             )
             if rule is not None and not rule.satisfied and self.config.enforce_ma_rules:
@@ -813,9 +817,6 @@ class ChanEngine:
             # 定理条件：回调低点不跌破 ZG
             if pullback.low <= center.zg:
                 continue
-            if pullback.high >= breakout.high:
-                continue
-
             confirmation_index = pullback.end_index + 1
             if confirmation_index >= len(ordered):
                 continue
@@ -828,6 +829,8 @@ class ChanEngine:
                 if previous_effort.macd_area
                 else 0.0
             )
+            if score < self.config.min_third_buy_score:
+                continue
             signals.append(
                 Signal(
                     symbol=confirmation.symbol,

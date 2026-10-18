@@ -447,3 +447,134 @@ def fetch_quote_name(symbol: str) -> str:
     if name_column and rows[0].get(name_column):
         return str(rows[0][name_column]).strip()
     return symbol
+
+
+# ---------------------------------------------------------------------------
+# 板块 / 大盘：个股 vs 板块 vs 大盘 的同期力度对比
+#
+# 数据源能力（本机实测，勿凭直觉改）：
+# - `kline` 对板块（pt 前缀）与指数（sh000001）同样可用，且接受 --fq qfq，
+#   所以板块/指数 K 线直接复用 fetch_bars 即可，不需要另写一套。
+# - `quote` **不返回板块字段**，因此「这只票属于哪些板块」必须反查：
+#     industry-chain stock <symbol>  → 主题名（如 白酒 / 食品饮料）
+#     search <主题名> --type sector  → pt 代码（如 pt01801125 白酒Ⅱ）
+#   两步都走网络，结果必须落库缓存，否则每次分析个股都要重新问一遍。
+# - 连续调用会触发限流（实测「请求过于频繁」），两次之间必须留间隔。
+# ---------------------------------------------------------------------------
+
+MARKET_INDEX_CODE = "sh000001"
+MARKET_INDEX_NAME = "上证指数"
+
+# 板块查询之间的最小间隔（秒）。实测短于 3 秒就开始出现限流提示。
+SECTOR_QUERY_PAUSE = 3.0
+
+# 申万行业清单优先级：二级最常用（白酒Ⅱ 这类），概念板块兜底
+SECTOR_LEVEL_BY_CATEGORY = {
+    "申万一级行业清单": "sw1",
+    "申万二级行业清单": "sw2",
+    "申万三级行业清单": "sw3",
+}
+SECTOR_LEVEL_PRIORITY = ("sw2", "sw3", "sw1", "concept")
+
+
+def parse_industry_chain_themes(text: str) -> List[str]:
+    """从 `industry-chain stock` 输出里取「所属主题」名称。
+
+    输出里有两张表（所属主题 / 所属节点），只认带 themeName 列的那张，
+    否则会把产业链节点名（如「酱香型白酒」）当成板块名用。
+    """
+
+    themes: List[str] = []
+    header: Optional[List[str]] = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            # 遇到非表格行就重置：下一张表会重新给表头
+            header = None
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if set("".join(cells)) <= set("-: "):
+            continue
+        if header is None:
+            header = cells
+            continue
+        if len(cells) != len(header):
+            continue
+        row = dict(zip(header, cells))
+        theme = str(row.get("themeName", "")).strip()
+        if theme and theme not in themes:
+            themes.append(theme)
+    return themes
+
+
+def parse_sector_search(text: str) -> List[dict]:
+    """从 `search <关键词> --type sector` 输出里取板块代码 / 名称 / 层级。"""
+
+    sectors: List[dict] = []
+    for row in parse_markdown_table(text):
+        code = str(row.get("code", "")).strip()
+        name = str(row.get("name", "")).strip()
+        category = str(row.get("sectorCategory", "")).strip()
+        if not code or not name:
+            continue
+        sectors.append(
+            {
+                "code": code,
+                "name": name,
+                "level": SECTOR_LEVEL_BY_CATEGORY.get(category, "concept"),
+                "category": category,
+            }
+        )
+    return sectors
+
+
+def _sector_rank(theme: str, sector: dict) -> tuple:
+    """板块挑选的排序键：先按层级，再按名称与主题的相关度。
+
+    同名优先很关键：`search 白酒` 会同时返回「白酒Ⅱ」「非白酒」「白酒概念」，
+    只看层级优先级会把「非白酒」也排到前面去。
+    """
+
+    level = sector["level"]
+    level_rank = (
+        SECTOR_LEVEL_PRIORITY.index(level)
+        if level in SECTOR_LEVEL_PRIORITY
+        else len(SECTOR_LEVEL_PRIORITY)
+    )
+    name = sector["name"]
+    name_rank = 0 if (theme and (theme in name or name in theme)) else 1
+    return (level_rank, name_rank)
+
+
+def fetch_stock_sectors(
+    symbol: str, max_themes: int = 3, pause: float = SECTOR_QUERY_PAUSE
+) -> List[dict]:
+    """反查个股所属板块，返回 [{code, name, level, from_theme}]。
+
+    拿不到就返回空列表——板块只是辅助信息，绝不能因为反查失败让个股分析崩掉。
+    """
+
+    if max_themes <= 0:
+        return []
+    try:
+        output = run_westock(["industry-chain", "stock", symbol], timeout=30)
+    except MarketDataError:
+        return []
+
+    themes = parse_industry_chain_themes(output)[:max_themes]
+    picked: List[dict] = []
+    seen: set = set()
+    for index, theme in enumerate(themes):
+        if index > 0 and pause > 0:
+            time.sleep(pause)
+        try:
+            found = parse_sector_search(run_westock(["search", theme, "--type", "sector"], timeout=30))
+        except MarketDataError:
+            continue
+        candidates = [item for item in found if item["code"] not in seen]
+        if not candidates:
+            continue
+        best = min(candidates, key=lambda item: _sector_rank(theme, item))
+        seen.add(best["code"])
+        picked.append({**best, "from_theme": theme})
+    return picked

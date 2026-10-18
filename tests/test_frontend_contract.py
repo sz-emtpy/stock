@@ -129,13 +129,18 @@ class StockNavigationTest(unittest.TestCase):
         self.assertIn("event.stopPropagation(); analyzeFrom(", self.html)
 
     def test_table_labels_and_tabs_cover_every_table(self) -> None:
+        # 9 张带「查看结构」入口的表（候选/关注圈/5 张池表/自选）。
+        # table-runs / table-cards / table-snapshots 是纯展示表格，没有个股跳转，
+        # 故不参与 TABLE_LABELS 映射。
         tables = self.table_ids()
-        self.assertEqual(len(tables), 8, f"应为 8 张表，实际 {sorted(tables)}")
+        display_only = {"table-runs", "table-cards", "table-snapshots"}
+        navigable = tables - display_only
+        self.assertEqual(len(tables), 13, f"应为 13 张表，实际 {sorted(tables)}")
         for mapping_name in ("TABLE_LABELS", "TABLE_TAB"):
             block = re.search(mapping_name + r"\s*=\s*\{(.*?)\};", self.html, re.S)
             self.assertIsNotNone(block, f"缺少 {mapping_name}")
             keys = set(re.findall(r"'(table-[^']+)'", block.group(1)))  # type: ignore[union-attr]
-            self.assertEqual(keys, tables, f"{mapping_name} 与表格清单不一致：{sorted(tables ^ keys)}")
+            self.assertEqual(keys, navigable, f"{mapping_name} 与表格清单不一致：{sorted(navigable ^ keys)}")
 
     def test_navigation_functions_declared(self) -> None:
         for name in ("orderedSymbols", "setNavContext", "renderNav", "stepStock", "syncNav"):
@@ -191,11 +196,15 @@ class WatchlistPanelContractTest(unittest.TestCase):
     def test_stats_panel_loads_on_market_and_watch_tabs(self) -> None:
         # 市场页签要看成功率，关注圈页签要看进出圈计数，两边都得加载
         self.assertRegex(self.html, r"if \(name === 'watch'\) \{ loadWatchlist\(\); loadSuccessRate\(\); \}")
-        self.assertRegex(self.html, r"if \(name === 'market'\) loadSuccessRate\(\);")
+        # 市场页签现在还顺带加载板块热度与扫描历史
+        self.assertRegex(self.html, r"if \(name === 'market'\) \{[^}]*loadSuccessRate\(\)")
 
     def test_watchlist_hint_documents_removal_rule(self) -> None:
-        self.assertIn("一买失败与二买失败即剔除出圈", self.html)
+        # 出圈规则要在界面上写全：一买失败 / 二买失败 / 二买守住 三种终态都会出圈，
+        # 且必须说明「关注圈是状态机跟踪池，数量天然小于买点池」这一口径差异。
+        self.assertIn("一买失败、二买失败、二买守住都会出圈", self.html)
         self.assertIn("二买后窗口内破二买低点", self.html)
+        self.assertIn("关注圈是「状态机跟踪池」", self.html)
 
 
 class DivergenceSegmentContractTest(unittest.TestCase):
@@ -246,15 +255,431 @@ class DivergenceSegmentContractTest(unittest.TestCase):
         self.assertIn("'背驰前段'", legend.group(0))  # type: ignore[union-attr]
         self.assertIn("'背驰段'", legend.group(0))  # type: ignore[union-attr]
 
-    def test_default_shows_only_latest_segment(self) -> None:
-        # 默认只描最近一个：全画会把图面糊满
+    def test_divergence_toggle_semantics_inverted(self) -> None:
+        """背驰段开关语义（用户确认已反转）：
+
+        复选框文案是「只看最近一个背驰段」——默认**不勾选 = 全画**，
+        勾选后才只描最近一个（防止图面糊满）。这与早期「默认只描最近一个」相反。
+
+        锁定：① 复选框 label 必须是「只看最近一个背驰段」；
+        ② `buildDivergenceSeries` 里「不勾选」分支必须落到 `list`（全画），
+           「勾选」分支才 `list.slice(-1)`（只取最近一个）。
+        谁把默认又改回「只描最近一个」会让早期信号重新糊满图面，必须抓住。
+        """
+
+        self.assertIn("只看最近一个背驰段", self.html, "背驰段开关文案必须是「只看最近一个背驰段」")
         block = re.search(r"function buildDivergenceSeries\(.*?\n\}", self.html, re.S)
-        self.assertIsNotNone(block)
-        self.assertIn("list.slice(-1)", block.group(0))  # type: ignore[union-attr]
+        self.assertIsNotNone(block, "缺少 buildDivergenceSeries 定义")
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertIn("list.slice(-1)", body, "勾选后应只取最近一个背驰段（slice(-1)）")
+        # 默认分支：onlyLatest 为假时取全部 list（全画）
+        self.assertRegex(
+            body,
+            r"onlyLatest[^;]*\?[^:]*list\.slice\(-1\)\s*:\s*list",
+            "默认（不勾选）必须画全部背驰段，而非只画最近一个",
+        )  # type: ignore[union-attr]
 
     def test_signal_detail_skips_object_meta(self) -> None:
         # previous_segment 是坐标对象，fmt 只会得到「—」，直接刷掉
         self.assertIn("typeof v !== 'object'", self.html)
+
+
+class PoolRateAndChartContractTest(unittest.TestCase):
+    """买卖点池胜算列 + 个股对比条 + K 线 tooltip 涨跌幅 的前端契约。
+
+    本轮新增：池表每行要直接显示当前节点的胜算率；分析页要展示个股所属板块
+    与同期个股/板块/大盘力度对比；K 线 tooltip 要显示当日涨跌幅。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_pool_tables_have_numeric_rate_column(self) -> None:
+        # 5 张买卖点池表都要有「胜算」列，且 data-type=num
+        # （排序引擎靠 data-type 决定数值排序，写成 text 会让胜算列乱序）。
+        # 买点池（一买/二买/三买）的胜算列排序键是 system_score_value——体系分在前；
+        # 卖点池（一卖/二卖）没有体系分口径，排序键仍是 rate_value。
+        sys_cols = self.html.count('data-key="system_score_value" data-type="num">胜算')
+        rate_cols = self.html.count('data-key="rate_value" data-type="num">胜算')
+        self.assertGreaterEqual(sys_cols, 3, "买点池缺少体系分型「胜算」列（应有 3 张）")
+        self.assertGreaterEqual(rate_cols, 2, "卖点池缺少数值型「胜算」列（应有 2 张）")
+        self.assertGreaterEqual(sys_cols + rate_cols, 5, "买卖点池应有 5 张带「胜算」列的表")
+
+    def test_pool_rate_cell_shows_system_score(self) -> None:
+        """胜算列要同时体现「体系分」与「胜率」，且体系分来自后端即将给出的字段。"""
+
+        self.assertRegex(self.html, r"function\s+systemScoreCell\s*\(")
+        self.assertRegex(self.html, r"function\s+poolRateCell\s*\(")
+        self.assertIn("h.system_score", self.html)
+        self.assertIn("h.system_hits", self.html)
+        self.assertIn("h.system_available", self.html)
+        # 买点池调用处必须开 opts.systemScore，否则渲染的是纯胜率、体系分不显示
+        self.assertIn("'一买', { systemScore: true })", self.html)
+        self.assertIn("'二买', { systemScore: true })", self.html)
+        self.assertIn("'三买', { systemScore: true })", self.html)
+
+    def test_comparison_bar_container_exists(self) -> None:
+        # 个股所属板块 + 同期对比信息条的挂载点
+        self.assertIn('id="comparison-bar"', self.html, "缺少对比条容器 comparison-bar")
+
+    def test_comparison_renderer_wired(self) -> None:
+        # 分析入口要把 sectors / comparison 挂上并调用渲染
+        self.assertRegex(self.html, r"function\s+renderComparison\s*\(")
+        self.assertIn("renderComparison(data)", self.html)
+        self.assertIn("$('comparison-bar')", self.html)
+
+    def test_chart_tooltip_shows_daily_change_pct(self) -> None:
+        # K 线 tooltip 必须显示「当日涨跌幅 %」（相对前一根收盘），红涨绿跌
+        self.assertIn("当日幅度", self.html, "tooltip 缺少「当日幅度」涨跌幅展示")
+        # 涨跌幅计算：相对前一根收盘
+        self.assertRegex(
+            self.html,
+            r"chg\s*=\s*item\.prevClose\s*\?\s*\(item\.close\s*-\s*item\.prevClose\)\s*/",
+            "tooltip 涨跌幅必须相对前一根收盘计算",
+        )
+        # 中国市场配色：涨红跌绿
+        self.assertRegex(self.html, r"chg\s*>=\s*0\s*\?\s*'#ef4444'\s*:\s*'#22c55e'")
+
+    def test_datazoom_defaults_to_full_view(self) -> None:
+        # 默认全览，不让前 55% 的历史买卖点被裁掉
+        self.assertRegex(self.html, r"start:\s*0,\s*end:\s*100", "dataZoom 默认必须全览（start:0,end:100）")
+
+    def test_all_five_signal_kinds_rendered_on_chart(self) -> None:
+        # 一买/二买/三买用 pin（黄/绿/紫），一卖/二卖用向下箭头（浅红/深红）
+        for needle in (
+            "pinSeries('一买'",
+            "pinSeries('二买'",
+            "pinSeries('三买'",
+            "arrowSeries('一卖'",
+            "arrowSeries('二卖'",
+        ):
+            self.assertIn(needle, self.html, f"图表缺少买卖点标注：{needle}")
+
+
+class IntervalNestingContractTest(unittest.TestCase):
+    """30 分钟区间套的前端契约：按钮、容器、渲染函数、API 入口都要就位。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_nesting_button_exists(self) -> None:
+        self.assertIn('id="btn-nesting"', self.html, "缺少「30分钟区间套」按钮")
+        self.assertIn("$('btn-nesting').addEventListener('click', runIntervalNesting)", self.html)
+
+    def test_nesting_container_exists(self) -> None:
+        self.assertIn('id="nesting-box"', self.html, "缺少区间套结果容器 nesting-box")
+
+    def test_nesting_renderer_wired(self) -> None:
+        self.assertRegex(self.html, r"function\s+renderIntervalNesting\s*\(")
+        self.assertIn("API.intervalNesting", self.html)
+        self.assertIn("runIntervalNesting()", self.html)
+
+    def test_nesting_short_labels_defined(self) -> None:
+        # 渲染里用 KIND_LABELS_SHORT 缩写买点名，必须定义否则渲染抛错
+        self.assertIn("KIND_LABELS_SHORT", self.html)
+
+
+class LazyComparisonContractTest(unittest.TestCase):
+    """板块/对比懒加载的前端契约。
+
+    板块反查实测 5.7 秒，绝不能挡在首屏上：/api/analyze 只在已有板块缓存时
+    才直接带上 comparison；否则返回 lazy=true，由前端异步补一次独立请求。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_comparison_api_entry_exists(self) -> None:
+        self.assertIn("/api/analysis/comparison", self.html, "缺少板块/对比独立接口")
+
+    def test_lazy_loader_declared_and_called(self) -> None:
+        self.assertRegex(self.html, r"function\s+loadComparison\s*\(")
+        self.assertIn("loadComparison(symbol, state.period, data)", self.html)
+
+    def test_analyze_renders_before_comparison(self) -> None:
+        """先渲染 K 线与结论，再补对比——顺序反了就说明又阻塞首屏了。"""
+
+        block = re.search(r"async function runAnalyze\(.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(block)
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertLess(
+            body.index("renderChart(data)"),
+            body.index("loadComparison("),
+            "K 线渲染必须在对比懒加载之前",
+        )
+
+    def test_lazy_guard_discards_stale_response(self) -> None:
+        """快速左右切换时，慢的对比响应不能覆盖当前这只票。"""
+
+        self.assertRegex(self.html, r"comparisonToken", "缺少对比请求的竞态守卫")
+        self.assertRegex(self.html, r"token\s*!==\s*comparisonToken")
+
+    def test_lazy_marker_respected(self) -> None:
+        # 后端标记 lazy 时前端不再画一次（避免两个「加载中」打架）
+        self.assertRegex(self.html, r"c\.lazy")
+
+    def test_existing_sector_bar_still_used(self) -> None:
+        # 原有 comparison-bar 容器与 renderComparison 不能被删
+        self.assertIn('id="comparison-bar"', self.html)
+        self.assertRegex(self.html, r"function\s+renderComparison\s*\(")
+
+
+class UsabilityContractTest(unittest.TestCase):
+    """易用性补强的前端契约：搜索/筛选/分页/联想/主题/错误块/时间线/三联图/自选/热度/历史。
+
+    这些功能都靠 DOM id 与函数名接线，改名或漏写会静默失效（点了没反应），
+    所以用纯文本断言把它们钉住。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_every_table_has_search_box(self) -> None:
+        # 纯展示表（扫描历史/结构卡/快照）不需要搜索；其余 9 张业务表都要有
+        display_only = {"table-runs", "table-cards", "table-snapshots"}
+        tables = set(re.findall(r'<table id="(table-[^"]+)"', self.html)) - display_only
+        searched = set(re.findall(r'data-search="(table-[^"]+)"', self.html))
+        self.assertEqual(searched, tables, f"缺搜索框的表：{sorted(tables - searched)}")
+
+    def test_watchlist_has_state_filter(self) -> None:
+        self.assertIn('data-filter="table-watch"', self.html)
+        # 五个状态都要能筛
+        for state in ("WAIT_SECOND_BUY", "WEAK_TRACK", "OPPORTUNITY", "FAILED", "SECOND_BUY_FAILED"):
+            self.assertIn(f'<option value="{state}"', self.html, f"筛选下拉缺少状态 {state}")
+
+    def test_pagination_replaces_show_all_only(self) -> None:
+        # 分页落地后，「显示全部」不再是唯一手段
+        self.assertIn("const PAGE_SIZE = 50;", self.html)
+        self.assertRegex(self.html, r"function\s+paintPager\s*\(")
+        self.assertRegex(self.html, r"window\.gotoPage\s*=\s*function")
+
+    def test_search_does_not_mutate_view_items(self) -> None:
+        """搜索只过滤视图、不改 view.items —— 否则左右切换的顺序会被搜索词改掉。"""
+
+        block = re.search(r"function viewFiltered\(.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(block, "缺少 viewFiltered")
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertIn("view.items", body)
+        self.assertNotIn("view.items =", body, "搜索不该写回 view.items")
+
+    def test_symbol_input_autocomplete(self) -> None:
+        self.assertIn('id="symbol-suggest"', self.html)
+        self.assertRegex(self.html, r"function\s+querySuggest\s*\(")
+        self.assertRegex(self.html, r"function\s+pickSuggest\s*\(")
+        self.assertIn("/api/universe?q=", self.html)
+
+    def test_symbol_prefix_normalisation(self) -> None:
+        """输 600519 要能自动补成 sh600519（后端只认带前缀的代码）。"""
+
+        block = re.search(r"function normalizeSymbolInput\(.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(block, "缺少 normalizeSymbolInput")
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertIn("'sh'", body)
+        self.assertIn("'sz'", body)
+        self.assertRegex(body, r"startsWith\('6'\)")
+        self.assertRegex(body, r"startsWith\('0'\)")
+
+    def test_theme_toggle_and_persist(self) -> None:
+        self.assertIn('id="btn-theme"', self.html)
+        self.assertIn("body.light", self.html)
+        self.assertIn("chanpicker-theme", self.html, "主题需要 localStorage 持久化")
+        self.assertRegex(self.html, r"function\s+applyTheme\s*\(")
+
+    def test_error_block_replaces_toast_only(self) -> None:
+        self.assertIn('id="error-box"', self.html)
+        self.assertRegex(self.html, r"function\s+showError\s*\(")
+        self.assertRegex(self.html, r"function\s+classifyError\s*\(")
+        # 至少覆盖限流与 K 线不足两类建议
+        self.assertIn("数据源限流", self.html)
+        self.assertIn("K 线数量不足", self.html)
+
+    def test_chart_loading_skeleton(self) -> None:
+        self.assertRegex(self.html, r"function\s+showChartLoading\s*\(")
+        self.assertRegex(self.html, r"function\s+hideChartLoading\s*\(")
+
+    def test_chart_loading_does_not_hide_chart(self) -> None:
+        """loading 用覆盖层，绝不能把 chart 容器设 display:none——否则首次分析时
+        echarts.init 在隐藏容器上拿到 0 尺寸、之后不 resize，图表空白。"""
+        block = re.search(r"function showChartLoading\(.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(block)
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertNotIn("chart.style.display", body, "showChartLoading 不应改 chart 的 display")
+        self.assertNotIn("prevDisplay", body)
+
+    def test_timeline_panel(self) -> None:
+        self.assertIn('id="timeline-card"', self.html)
+        self.assertIn('id="timeline-list"', self.html)
+        self.assertRegex(self.html, r"function\s+renderTimeline\s*\(")
+
+    def test_three_timeframe_strip(self) -> None:
+        self.assertIn('id="tf-grid"', self.html)
+        self.assertRegex(self.html, r"function\s+renderTimeframeStrip\s*\(")
+        # 三格必须覆盖日线 / 30 分钟 / 15 分钟
+        for period in ("'day'", "'m30'", "'m15'"):
+            self.assertIn(period, self.html)
+
+    def test_favorites_tab_and_star(self) -> None:
+        self.assertIn('<button data-tab="favorites">自选持仓</button>', self.html)
+        self.assertIn('id="btn-fav"', self.html)
+        self.assertIn('id="table-favorites"', self.html)
+        self.assertRegex(self.html, r"function\s+loadFavorites\s*\(")
+        self.assertRegex(self.html, r"function\s+toggleFavorite\s*\(")
+        # 成本价编辑与浮盈展示
+        self.assertRegex(self.html, r"window\.editCost\s*=")
+        self.assertIn("pnl_pct", self.html)
+
+    def test_sector_heat_panel(self) -> None:
+        self.assertIn('id="heat-list"', self.html)
+        self.assertRegex(self.html, r"function\s+loadSectorHeat\s*\(")
+        self.assertIn("/api/market/sector-heat", self.html)
+
+    def test_scan_history_and_incremental(self) -> None:
+        self.assertIn('id="table-runs"', self.html)
+        self.assertRegex(self.html, r"function\s+loadScanHistory\s*\(")
+        self.assertIn('id="btn-scan-incremental"', self.html)
+        self.assertRegex(self.html, r"function\s+startIncrementalScan\s*\(")
+
+    def test_batch_nesting_panel(self) -> None:
+        self.assertIn('id="btn-batch-nesting"', self.html)
+        self.assertRegex(self.html, r"function\s+runBatchNesting\s*\(")
+        self.assertIn("/api/market/interval-nesting/batch", self.html)
+
+    def test_sensitivity_panel(self) -> None:
+        self.assertIn('id="sensitivity-body"', self.html)
+        self.assertRegex(self.html, r"function\s+loadSensitivity\s*\(")
+        self.assertIn("/api/backtest/sensitivity", self.html)
+
+    def test_url_share_state(self) -> None:
+        self.assertRegex(self.html, r"function\s+readUrlState\s*\(")
+        self.assertRegex(self.html, r"function\s+writeUrlState\s*\(")
+        self.assertIn("history.replaceState", self.html)
+        # 启动时应读取 URL 并自动分析
+        self.assertRegex(self.html, r"if\s*\(urlState\.symbol\)")
+
+    def test_prefs_persist(self) -> None:
+        self.assertRegex(self.html, r"function\s+loadPrefs\s*\(")
+        self.assertRegex(self.html, r"function\s+savePrefs\s*\(")
+        self.assertIn("chanpicker-prefs", self.html)
+
+    def test_mobile_responsive_rules(self) -> None:
+        self.assertIn("@media (max-width: 860px)", self.html)
+        # 移动端表格必须能横向滚动，否则列被压扁
+        self.assertRegex(self.html, r"\.card > table \{ display: block; overflow-x: auto;")
+
+    def test_rate_tooltip_is_visible_not_title(self) -> None:
+        """胜算详情用可见 tooltip，不用 title（触屏看不到 title）。"""
+
+        block = re.search(r"function rateCell\(.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(block)
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertIn("tip-bubble", body)
+        self.assertNotIn("title=", body, "rateCell 不应退回 title 属性")
+
+
+class TradingSystemContractTest(unittest.TestCase):
+    """交易体系页 + 个股匹配分的前端契约。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_system_tab_and_sections(self) -> None:
+        self.assertIn('<button data-tab="system">交易体系</button>', self.html)
+        self.assertIn('id="tab-system"', self.html)
+        for element_id in ("sys-kv", "sys-gain", "table-cards", "sys-validate", "table-snapshots"):
+            self.assertIn(f'id="{element_id}"', self.html, f"缺少 {element_id}")
+
+    def test_system_render_functions(self) -> None:
+        for name in ("loadSystem", "renderSystemGain", "renderSystemCards",
+                     "renderSystemValidate", "rebuildSystem", "renderSystemMatch"):
+            self.assertRegex(self.html, r"function\s+" + name + r"\s*\(")
+
+    def test_system_api_wired(self) -> None:
+        for path in ("/api/system/gain", "/api/system/validate",
+                     "/api/system/rebuild-outcomes", "/api/system/history"):
+            self.assertIn(path, self.html, f"缺少 API {path}")
+
+    def test_stock_match_rendered(self) -> None:
+        self.assertIn('id="system-match"', self.html)
+        self.assertIn("renderSystemMatch(data.system_match, data.bars)", self.html)
+
+    def test_match_latest_and_history_split(self) -> None:
+        """近 3 个交易日的买点突出显示，更早的一律归入历史折叠（用户口径）。"""
+
+        self.assertIn("is_active", self.html)
+        self.assertIn("SM_LATEST_WINDOW_DAYS", self.html)
+        self.assertIn("tradingDaysFromLast", self.html)
+        # 调用处必须把 bars 传进来供交易日距离计算
+        self.assertIn("renderSystemMatch(data.system_match, data.bars)", self.html)
+        self.assertIn("sm-latest", self.html)
+        self.assertRegex(self.html, r"window\.toggleSystemHistory\s*=")
+        self.assertIn('id="sm-history"', self.html)
+        # 展开/收起按钮
+        self.assertIn("展开历史", self.html)
+
+    def test_system_tab_loads_on_switch(self) -> None:
+        self.assertRegex(self.html, r"if \(name === 'system'\) loadSystem\(\);")
+
+    def test_pick_tab_and_panel(self) -> None:
+        self.assertIn('<button data-tab="pick">体系选股</button>', self.html)
+        self.assertIn('id="tab-pick"', self.html)
+        self.assertIn('id="table-pick"', self.html)
+        self.assertRegex(self.html, r"function\s+loadPick\s*\(")
+        self.assertIn("/api/system/pick", self.html)
+        self.assertRegex(self.html, r"if \(name === 'pick'\) loadPick\(\);")
+
+
+class TradingSystemPickContractTest(unittest.TestCase):
+    """体系选股池前端契约：跳转映射 + 搜索筛选。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_pick_table_navigable(self) -> None:
+        # 选股池表格要能点「查看结构」跳个股，必须进 TABLE_LABELS/TABLE_TAB
+        self.assertIn("'table-pick': '体系选股'", self.html)
+        self.assertIn("'table-pick': 'pick'", self.html)
+
+    def test_pick_has_search_and_filter(self) -> None:
+        self.assertIn('data-search="table-pick"', self.html)
+        self.assertIn('data-filter="table-pick"', self.html)
+        # 三种买点都能筛
+        for kind in ("FIRST_BUY", "SECOND_BUY", "THIRD_BUY"):
+            self.assertIn(f'<option value="{kind}"', self.html)
+
+
+class ChartBigViewContractTest(unittest.TestCase):
+    """点击主图放大看大图（用户反馈的「点日线图没大图」）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_modal_and_functions(self) -> None:
+        self.assertIn('id="chart-modal"', self.html)
+        self.assertIn('id="cm-chart"', self.html)
+        for name in ("openBigChart", "closeBigChart", "buildChartOption"):
+            self.assertRegex(self.html, r"function\s+" + name + r"\s*\(")
+
+    def test_chart_click_bound_to_open(self) -> None:
+        # 用容器原生 DOM 事件，点空白也能放大（chart.on('click')/getZr 只响应图形元素）
+        self.assertRegex(self.html, r"\$\('chart'\)\.addEventListener\('click',\s*\(\) => openBigChart\(\)\)")
+
+    def test_resize_listener_registered_once(self) -> None:
+        # resize 只在 init 块里注册一次，不能每次 renderChart 都 addEventListener（会堆积）
+        block = re.search(r"function renderChart\(.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(block)
+        body = block.group(0)  # type: ignore[union-attr]
+        self.assertEqual(body.count("addEventListener('resize'"), 1, "resize 监听器只应注册一次")
+
+    def test_esc_closes_modal(self) -> None:
+        self.assertIn("keydown", self.html)
+        self.assertIn("closeBigChart()", self.html)
 
 
 if __name__ == "__main__":

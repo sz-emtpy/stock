@@ -440,5 +440,89 @@ class ServiceBatchUsageTest(unittest.TestCase):
             self.assertEqual(names[f"sh6{i:05d}"], f"股票{i}")
 
 
+class BulkSuccessRatePerformanceTest(unittest.TestCase):
+    """池表挂胜算：241 只必须走批量，锁死不许退回逐只查询。
+
+    实测：241 只逐只 `symbol_success_rate` = 6206 ms（且每条信号查询还会
+    随数据量放大）；批量 `symbol_success_rates`（symbol IN 查询 + 批量收盘
+    价序列 + 批量补名）= 约 700 ms。差距一个数量级，本组用例用两条断言抓住回退：
+    1）SQL SELECT 次数必须与标的数量无关（≈3 次），这是 N+1 真正被消掉的证据；
+    2）总耗时不得超过阈值（留足临时库抖动余量，仍远小于逐只的 6.2s）。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.store = Store(Path(cls._tmp.name) / "t.db")
+        cls.service = ScanService(cls.store)
+        from chanpicker.core import Signal, SignalKind  # noqa: E402
+
+        cls.symbols = [f"sh6{i:05d}" for i in range(241)]
+        for sym in cls.symbols:
+            # 70 根 K 线覆盖二买判定窗口（max_wait_bars 默认 30），并配一买/二买两条信号
+            cls.store.save_bars(make_bars(sym, 70))
+            cls.store.save_signals(
+                [
+                    Signal(
+                        symbol=sym,
+                        kind=kind,
+                        date="2026-02-01",
+                        bar_index=10,
+                        price=10.0,
+                        anchor_index=9,
+                        anchor_price=9.0,
+                        message="x",
+                        meta={"divergence_score": 0.2},
+                    )
+                    for kind in (SignalKind.FIRST_BUY, SignalKind.SECOND_BUY)
+                ]
+            )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.store.close()
+        cls._tmp.cleanup()
+
+    @staticmethod
+    def _count_selects(store: Store, action) -> int:
+        statements: list[str] = []
+        store._conn.set_trace_callback(statements.append)
+        try:
+            action()
+        finally:
+            store._conn.set_trace_callback(None)
+        return len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])
+
+    def test_bulk_issues_fixed_number_of_selects(self) -> None:
+        """241 只也应只有「批量信号 + 批量收盘 + 批量补名」≈ 3 次查询，不是 241×N。
+
+        这是确定性的锁（与行数无关），改回逐只 `symbol_success_rate` 循环
+        会立刻变成数百次 SELECT，比计时断言更稳、不会误报。
+        """
+
+        selects = self._count_selects(
+            self.store, lambda: self.service.symbol_success_rates(self.symbols)
+        )
+        self.assertLessEqual(selects, 10, f"批量胜率 SELECT 次数 {selects}：疑似退回逐只查询（应为个位数）")
+
+    def test_bulk_success_rate_under_threshold(self) -> None:
+        """软护栏：总耗时不得超过阈值，否则即便没走逐只，也说明算法退化了。
+
+        阈值取 2000ms：真实批量在本地库约 700ms，临时库数据量更小只会更快；
+        这里留足方差余量，同时断然排除逐只回退（> 6000ms）。
+        """
+
+        import time
+
+        start = time.perf_counter()
+        rates = self.service.symbol_success_rates(self.symbols)
+        elapsed = time.perf_counter() - start
+        self.assertLessEqual(
+            elapsed, 2.0, f"批量胜率耗时 {elapsed * 1000:.1f}ms 超过 2000ms，疑似退回逐只查询或算法退化"
+        )
+        # 正确性底线：批量不能漏算任何一只
+        self.assertEqual(len(rates), len(self.symbols))
+
+
 if __name__ == "__main__":
     unittest.main()

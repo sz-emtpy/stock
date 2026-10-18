@@ -138,9 +138,11 @@ class SecondBuyFailureTest(unittest.TestCase):
         self.assertEqual(item.state, WatchState.FAILED)
         self.assertEqual(item.exit_reason, "跌破一买低点，关注失效")
 
-    def test_breakout_after_window_is_not_a_failure(self) -> None:
+    def test_breakout_after_window_archives_as_ok_not_failure(self) -> None:
         # 考验窗口之外的破位不计入这笔二买：可能是后续大盘整体回落，
         # 记成「二买失败」会把成功率做虚。
+        # 但也不能永远停在 OPPORTUNITY——那会变成僵尸记录，占着跟踪位、
+        # first_buy_date 永远不更新。考验期满且期间守住 → 归档为 SECOND_BUY_OK。
         manager = WatchlistManager(ChanConfig(max_wait_bars=5))
         existing = [
             watch_item(
@@ -153,13 +155,16 @@ class SecondBuyFailureTest(unittest.TestCase):
                 meta={"second_buy_low": 70.0, "second_buy_index": 8},
             )
         ]
-        # 共 13 根，二买在 index 8，窗口 5 根 → index 13 才超窗口；
-        # 这里最后一根 index 12 距 8 为 4，仍在窗口内，所以先构造窗口外的场景：
+        # 共 19 根，二买在 index 8，窗口 5 根 → index 13 就超窗口，
+        # 最后一根 index 18 远在窗口之外，且收盘已跌破 second_low=70。
         prices = [100, 95, 90, 85, 80, 60, 78, 88, 74, 80, 76, 72, 69, 68, 67, 66, 65, 64, 63]
         items = manager.update(bars=make_bars(prices), signals=[], existing=existing)
 
         item = next(it for it in items if it.symbol == "sh600000")
-        self.assertEqual(item.state, WatchState.OPPORTUNITY)
+        self.assertEqual(item.state, WatchState.SECOND_BUY_OK)
+        self.assertIn("守住二买低点", item.exit_reason or "")
+        # 归档态不能继续被认为在跟踪中
+        self.assertNotIn(item.state, TRACKING_STATES)
 
     def test_second_buy_failed_is_terminal(self) -> None:
         # 出圈后不再被跟踪，也不会因为新一轮扫描又变回机会态。

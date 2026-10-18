@@ -54,6 +54,13 @@ class WatchState(str, Enum):
     # 二买失败：二买确认后的考验窗口内，收盘价跌回二买低点下方。
     # 与 FAILED（跌破一买低点）是两层失效，不是同一个状态。
     SECOND_BUY_FAILED = "SECOND_BUY_FAILED"
+    # 二买成功归档：考验窗口（max_wait_bars）内收盘价始终守住二买低点。
+    # 这轮跟踪到此正常结束——二买的目的（确认回调不破前低）已经验证完毕，
+    # 之后无论价格怎么走都不再属于这笔二买的账。
+    # 不设这个终态会留下「僵尸记录」：二买确认后永不终结，first_buy_date
+    # 永远停在很久以前（实测有 591 天前的记录），导致同一只股票后来出现新的
+    # 一买时无法开启新一轮跟踪，关注圈的「一买数」也就永远和买点池对不上。
+    SECOND_BUY_OK = "SECOND_BUY_OK"
 
 
 # 仍在跟踪中的状态。OPPORTUNITY 必须留在这里：二买确认之后价格仍可能跌回
@@ -67,9 +74,17 @@ TRACKING_STATES = frozenset(
 )
 
 # 已出圈（软剔除）：关注圈接口不再返回，但记录留在库里供成功率统计。
-CLOSED_STATES = frozenset({WatchState.FAILED, WatchState.SECOND_BUY_FAILED})
+CLOSED_STATES = frozenset(
+    {
+        WatchState.FAILED,
+        WatchState.SECOND_BUY_FAILED,
+        WatchState.SECOND_BUY_OK,
+    }
+)
 
 # 触发「同标的冷静期」的状态：出现过的终态都算，避免刚失败又重新入圈。
+# SECOND_BUY_OK 刻意**不在**这里：二买守住是成功，不该因为「刚成功」而被
+# 拦住下一轮一买——它和新一买本来就是不同的下跌结构。
 COOLDOWN_STATES = frozenset(
     {WatchState.FAILED, WatchState.OPPORTUNITY, WatchState.SECOND_BUY_FAILED}
 )
@@ -80,6 +95,7 @@ WATCH_STATE_LABELS = {
     WatchState.OPPORTUNITY: "机会已触发",
     WatchState.FAILED: "一买失败",
     WatchState.SECOND_BUY_FAILED: "二买失败",
+    WatchState.SECOND_BUY_OK: "二买守住",
 }
 
 
@@ -1513,6 +1529,34 @@ class WatchlistManager:
         if second_index is None or second_low is None:
             return items
         if current_index - int(second_index) > self.config.max_wait_bars:
+            # 考验期已过且收盘始终守在二买低点上方 → 这笔二买成功，正常归档。
+            # 不归档会变成僵尸记录：状态永远停在 OPPORTUNITY，占着 active 位，
+            # 后来出现的新一买无法开启新一轮跟踪，first_buy_date 永远是老日期
+            # （实测有 591 天前的记录），关注圈与买点池的数字就永远对不上。
+            active.state = WatchState.SECOND_BUY_OK
+            active.exit_date = current_bar.date
+            active.exit_reason = (
+                f"二买后 {self.config.max_wait_bars} 根内守住二买低点，二买成功，跟踪结束"
+            )
+            # 同一批 signals 里如果有**更新的一买**（新一轮下跌结构结束），
+            # 立刻开新一轮，不必等下一次扫描。门槛用「比被归档的二买更晚」，
+            # 避免把同一轮里的老一买当新起点重复入圈。
+            archived_second_index = int(second_index)
+            newer = [s for s in first_buy_signals if s.bar_index > archived_second_index]
+            if newer and not self._in_cooldown(items, newer[-1].bar_index):
+                follow = newer[-1]
+                items.append(
+                    WatchItem(
+                        symbol=symbol,
+                        state=WatchState.WAIT_SECOND_BUY,
+                        first_buy_date=follow.date,
+                        first_buy_index=follow.bar_index,
+                        first_buy_price=follow.price,
+                        first_buy_low=follow.anchor_price,
+                        last_update_date=current_bar.date,
+                        meta=dict(follow.meta),
+                    )
+                )
             return items
         if current_bar.close < float(second_low):
             active.state = WatchState.SECOND_BUY_FAILED

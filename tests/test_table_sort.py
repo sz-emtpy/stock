@@ -117,7 +117,25 @@ class SortBehaviourTest(unittest.TestCase):
 
 
 class SortDeclarationTest(unittest.TestCase):
-    """8 张表的表头声明与默认排序口径。"""
+    """由排序引擎驱动的表的表头声明与默认排序口径。
+
+    注意 `table-runs`（扫描历史）不在此列：它是纯展示表，直接由 innerHTML 渲染，
+    不经过 setTableItems/paintTable，所以没有 data-key 声明也不需要排序。
+    """
+
+    # 走 setTableItems → paintTable 的表（排序/搜索/分页共用一套引擎）
+    SORT_DRIVEN = (
+        "table-first",
+        "table-second",
+        "table-watch",
+        "table-favorites",
+        "table-pool-first",
+        "table-pool-second",
+        "table-pool-third",
+        "table-pool-first-sell",
+        "table-pool-second-sell",
+        "table-pick",
+    )
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -133,19 +151,27 @@ class SortDeclarationTest(unittest.TestCase):
             found[matched.group("id")] = [a.group(1) if a else "" for a in attrs]
         return found
 
-    def test_eight_tables_declared(self) -> None:
+    def test_sort_driven_tables_declared(self) -> None:
         tables = self.tables()
-        self.assertEqual(len(tables), 8, f"应为 8 张表，实际 {sorted(tables)}")
+        display_only = {"table-runs", "table-cards", "table-snapshots"}
+        self.assertEqual(
+            set(tables), set(self.SORT_DRIVEN) | display_only,
+            f"表格清单与预期不一致：{sorted(set(tables))}",
+        )
 
     def test_every_table_has_sortable_columns(self) -> None:
-        for table_id, keys in self.tables().items():
+        tables = self.tables()
+        for table_id in self.SORT_DRIVEN:
+            self.assertIn(table_id, tables, f"缺少表 {table_id}")
+            keys = tables[table_id]
             declared = [key for key in keys if key]  # 空串表示不可排序（状态/类型/操作）
             self.assertTrue(declared, f"{table_id} 没有任何可排序列")
             self.assertEqual(len(declared), len(set(declared)), f"{table_id} 存在重复排序键: {declared}")
 
     def test_action_column_not_sortable(self) -> None:
-        for table_id, keys in self.tables().items():
-            self.assertEqual(keys[-1], "", f"{table_id} 的「操作」列不应参与排序")
+        tables = self.tables()
+        for table_id in self.SORT_DRIVEN:
+            self.assertEqual(tables[table_id][-1], "", f"{table_id} 的「操作」列不应参与排序")
 
     def test_date_columns_typed_as_date(self) -> None:
         for column in ("信号日", "一买日", "二买日"):

@@ -339,6 +339,51 @@ curl -s http://127.0.0.1:8787/api/health | grep -E 'westock_authorized|westock_h
 
 ### 6. Nginx 反向代理（对外 80/443）
 
+**gzip 不是可选项。** `/api/market/candidates` 一次返回 7 MB JSON，不开压缩时
+在 ~1 Mbps 出口上要传 58 秒；开了之后是 0.36 MB / 3 秒。这是首页从 20 秒级降到
+5 秒级的**唯一最大杠杆**，务必按下面配置。
+
+#### 6.1 全局 gzip（推荐，一次覆盖 80/443 所有 server）
+
+```bash
+sudo tee /etc/nginx/conf.d/gzip.conf > /dev/null <<'EOF'
+gzip on;
+gzip_comp_level 6;
+gzip_min_length 1024;
+gzip_vary on;
+gzip_proxied any;
+gzip_types
+    text/plain
+    text/css
+    text/xml
+    text/javascript
+    application/json
+    application/javascript
+    application/xml
+    application/xml+rss
+    application/w3c
+    image/svg+xml;
+EOF
+```
+
+先确认 `nginx.conf` 的 `http {}` 里有这一行（Debian/Ubuntu 默认有）：
+
+```bash
+grep -n 'conf.d' /etc/nginx/nginx.conf
+# 期望：include /etc/nginx/conf.d/*.conf;
+```
+
+> ⚠️ **`application/json` 必须显式列出**：nginx 默认 `gzip_types` 只含 `text/html`，
+> 不写这一项，API 的 JSON 完全不会被压缩——响应头会出现 `Vary: Accept-Encoding`
+> 却没有 `Content-Encoding`，看起来像"开了"，实际没生效。
+>
+> ⚠️ **不要写 `text/html`**：它默认总被压缩，重复声明会报 `duplicate MIME type` 警告。
+>
+> ⚠️ **`gzip_proxied any` 别省**：以后若在前面加 CDN 或再加一层代理，请求会带 `Via`
+> 头，缺这个参数就不压缩了。
+
+#### 6.2 server 块
+
 ```nginx
 server {
     listen 80;
@@ -355,16 +400,57 @@ server {
 
     location /static/ {
         alias /opt/chanpicker/frontend/;
-        expires 7d;
+        expires 30d;                  # 自带 Cache-Control: max-age，不要再 add_header 一次
+        gzip_static on;               # 可选：优先发预压缩的 .gz（见 6.3）
     }
 }
 ```
 
+> `gzip_static` 需要 nginx 编译了 `ngx_http_gzip_static_module`（Debian/Ubuntu 官方包默认含）。
+> 若 `nginx -t` 报 `unknown directive "gzip_static"`，直接删掉这一行即可——
+> 没做 6.3 的预压缩时它本来也不起作用。
+
+> 若不用 6.1 的全局配置，而是把 gzip 指令直接写进各 server 块，
+> **443 的 server 块必须同样加一份**，否则 HTTPS 访问不压缩。
+
+#### 6.3 可选：静态文件预压缩
+
+`echarts.min.js` 有 1 MB 且在 `<head>` 里加载，预压缩可省掉每次动态压缩的 CPU：
+
+```bash
+gzip -9 -k /opt/chanpicker/frontend/vendor/echarts.min.js
+# 生成同目录 echarts.min.js.gz，配合上面的 gzip_static on 生效
+```
+
+#### 6.4 应用配置并验证
+
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
-# HTTPS（推荐）
+
+# API 是否压缩（content-length 应从 7002365 降到 30 万量级）
+curl -sI -H 'Accept-Encoding: gzip' http://your.domain.com/api/market/candidates \
+  | grep -iE 'content-encoding|content-length'
+
+# 静态资源是否压缩（应从 1029203 降到 33 万量级）
+curl -sI -H 'Accept-Encoding: gzip' http://your.domain.com/static/vendor/echarts.min.js \
+  | grep -iE 'content-encoding|content-length'
+```
+
+期望两条都出现 `content-encoding: gzip`。
+
+> 本配置已用 `nginx:1.31.7-alpine` 实测验证（2026-10-20）：
+> 经 `proxy_pass` 转发、响应带 `Cache-Control: no-store` 的 `application/json`
+> 场景下，14,600 字节压缩到 1,125 字节并正确返回 `Content-Encoding: gzip`。
+> **`/api/*` 的 `no-store` 不会阻止压缩**——两者互不影响，这一点不必顾虑。
+
+#### 6.5 HTTPS
+
+```bash
 sudo certbot --nginx -d your.domain.com
 ```
+
+> certbot 生成的 443 server 块会自动沿用 6.1 的全局 gzip；若改用 6.2 的写法，
+> 记得给新块补一份 gzip 指令。
 
 ### 7. 每日自动扫描（定时跟踪）
 
@@ -484,10 +570,29 @@ curl -s "http://127.0.0.1:8787/api/market/candidates?recent_days=30" | head -c 3
 curl -s http://127.0.0.1:8787/api/watchlist | head -c 300
 curl -s http://127.0.0.1:8787/api/watchlist/stats | head -c 300      # 成功率 + 进出圈计数
 curl -X POST http://127.0.0.1:8787/api/watchlist/refresh | head -c 300  # 本地重评（不联网）
-# 4b) 性能自检：这三个接口都应在百毫秒级（超过 1 秒说明索引丢了）
-for ep in "/api/market/pools?days=3" "/api/market/risk?days=3" "/api/watchlist"; do
-  curl -s -o /dev/null -w "%{time_total}s  $ep\n" "http://127.0.0.1:8787$ep"
+# 4b) 服务端性能自检（在本机 127.0.0.1 上测，排除带宽与代理因素）
+for ep in "/api/market/pools?days=3" "/api/market/risk?days=3" "/api/watchlist" \
+          "/api/market/candidates" "/api/watchlist/stats"; do
+  curl -s -o /dev/null -w "%{time_total}s %{size_download}B  $ep\n" "http://127.0.0.1:8787$ep"
 done
+# 参考值（本机热缓存）：watchlist ~0.1s / risk ~0.2s / pools ~0.8s /
+# candidates ~2s（冷库首次 ~6s）/ stats ~0.04s
+# candidates 超过 3s 说明胜率计算在重复跑；其余接口 >1s 说明索引丢了
+
+# 4c) 判断「慢」发生在服务端还是带宽：两边各测一次对比
+DOMAIN="stock.temeu.top"          # 换成你的域名
+curl -s -o /dev/null -w "本机 TTFB=%{time_starttransfer}s 总=%{time_total}s 速度=%{speed_download}B/s\n" \
+  "http://127.0.0.1:8787/api/market/candidates"
+curl -s -o /dev/null -w "公网 TTFB=%{time_starttransfer}s 总=%{time_total}s 速度=%{speed_download}B/s\n" \
+  "http://${DOMAIN}/api/market/candidates"
+
+# 判读规则：
+#   本机 TTFB 就很大              → 服务端计算/DB 慢，查索引与重复计算
+#   两边 TTFB 接近、公网总耗时远大于本机
+#                                 → 带宽瓶颈，必须开 gzip（6.1 节）；换数据库无用
+#   公网 speed 长期低于 100 KB/s  → 出口约 1 Mbps，压缩是唯一有效手段
+#   两边都很快                    → 慢在前端串行请求或浏览器渲染，查 Network 时间线
+
 # 5) 首次全市场扫描（无缓存约 2–5 分钟；有当日缓存秒级返回）
 curl -X POST "http://127.0.0.1:8787/api/market/scan?scope=all"        # 全部A股（剔除北交所与ST，5028只）
 curl -X POST "http://127.0.0.1:8787/api/market/scan?scope=hs300"      # 仅沪深300，秒级验证用
@@ -516,6 +621,9 @@ curl -s "http://127.0.0.1:8787/api/market/risk?days=3"  | head -c 200
 | 扫描范围比预期少几百只 | 已按口径剔除北交所（350 只）与 ST/*ST（198 只） | 属预期行为；`scope=all` 响应里的 `universe` 字段给出「数据源总数 / 剔除北交所 / 剔除ST / 保留」四项明细 |
 | 磁盘被数据库撑大 | 全量 K 线约 220 万根 | 数据库约 450–550 MB。备份只保留最近 2 份；`data/*.bak-*` 可安全清理 |
 | **页面打开要等十几秒才出数据** | 旧版本 `bars` 索引前导列是 symbol，而 `recent_trading_dates`/`period_counts` 只按 period 过滤 → 全扫 218 万行 | 拉取最新代码（已加 `(period, trade_date)` 覆盖索引），重启后自动补建，实测 8990 ms → 0.24 ms |
+| **索引已修、首页仍要 20 秒以上** | **nginx 没开 gzip**。`/api/market/candidates` 返回 7 MB，在 ~1 Mbps 出口上传输 58 秒；实测服务端首字节只用了 4.8 秒 | 按第 6.1 节配 gzip，**`gzip_types` 必须含 `application/json`**。开完 7 MB → 0.36 MB，传输降到 3 秒级。详见 `改造方案-首页查询性能优化.md` |
+| 首页接口并发时互相拖慢（单个很快、一起就慢） | `Store` 是单条 SQLite 连接 + 一把 `RLock` 串行化，最慢的请求会把其余请求堵在后面（实测 `risk` 单跑 0.22 s → 并发 3.98 s） | 属已知架构约束。优化方向见方案 P1（缓存去重）与 P2-3（WAL + 只读连接池），后者触碰 `@_sync` 约束需单独验证 |
+| `/static/vendor/echarts.min.js` 单独就要 7–8 秒 | 1.03 MB 且在 `<head>` 同步加载，阻塞首屏渲染 | 加 `defer`（图表初始化本就在 DOM 就绪后）+ 第 6.3 节预压缩 + `expires 30d` |
 | 升级后首次启动卡十几秒 | 在给 218 万行的老库建新索引 | 只此一次，等它跑完即可，之后启动不受影响 |
 | 升级后首次启动卡几秒到几十秒 | 在给 `signals` 表去重（历史上同信号被重复插入过）并重建唯一约束 | 只此一次。日志可见删除行数；去重后个股历史次数会回落到真实值 |
 | 个股成功率显示 0% 但印象里这只票经常出二买 | 历史数据被 `days` 参数污染成重复，同一信号被算成多次尝试 | 拉取最新代码（已重建 `signals` 唯一约束并清理存量），升级后数字恢复真实 |

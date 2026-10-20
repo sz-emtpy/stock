@@ -51,7 +51,10 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .badge.ok { color: #3fb950; background: rgba(63,185,80,.12); }
 .badge.warn { color: var(--gold); background: rgba(240,180,41,.12); }
 .badge.err { color: var(--up); background: rgba(239,68,68,.12); }
-nav { display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid var(--border); }
+nav { display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid var(--border);
+  /* 页签吸附在 header 下方：滚动长表格时切换入口始终可见。
+     --header-h 由 syncStickyOffset() 实测写入（header 高度随字号/换行变化，不能硬编码） */
+  position: sticky; top: var(--header-h, 61px); z-index: 9; background: var(--bg); }
 nav button { background: none; border: none; color: var(--text-dim); padding: 10px 18px; font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; }
 nav button.active { color: var(--text); border-bottom-color: var(--accent); }
 nav button:hover { color: var(--text); }
@@ -68,9 +71,54 @@ button.ghost { background: var(--panel-2); color: var(--text); border: 1px solid
 .hint { color: var(--text-dim); font-size: 12px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
 .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+/* 可折叠卡片：点标题行收起/展开。
+   刻意不用「包一层 .collapse-body」的做法——那会让现有的
+   `.card > table { overflow-x: auto }`（移动端横向滚动）失去匹配。
+   这里只用 CSS 隐藏 h2 之后的兄弟节点，DOM 与 view.items 一律不动，
+   所以收起期间排序、分页、搜索状态全部保持不变。
+
+   两种标题位置都要支持：
+   - A 型：h2 是 .card 的直接子元素（多数区块）
+   - B 型：h2 在 .toolbar 里（自选 / 关注圈 / 选股池 / 交易体系），
+     这类卡片必须标 head-in-toolbar，收起时保留整个 toolbar，
+     否则连「刷新」按钮和标题一起消失。
+     注意不能对 A 型也用 :not(.toolbar)：板块热度卡里也有一个纯内容的
+     toolbar，那部分应该一起收起。 */
+.card.collapsible h2 { cursor: pointer; user-select: none; }
+.card.collapsible h2:hover { color: var(--accent); }
+.card.collapsible h2 .caret {
+  margin-left: auto; font-size: 11px; color: var(--text-dim);
+  line-height: 1; transition: transform .15s ease;
+}
+.card.collapsible.collapsed > h2 { margin-bottom: 0; }
+.card.collapsible.collapsed h2 .caret { transform: rotate(-90deg); }
+/* A 型才用「隐藏除 h2 外的一切」。必须排除 B 型，否则 B 型的 toolbar
+   （里面装着标题和刷新按钮）会先被这条规则隐藏掉，而 B 型规则并不会把它恢复。
+
+   这里必须 !important：`.empty` 空状态提示的 display 是 JS 写的 inline style
+   （`el.style.display = 'block'`），行内样式优先级高于任何普通选择器，
+   不加会把「暂无数据」的提示留在收起后的标题下面。只在 .collapsed 时命中，
+   展开时规则不生效，不会影响正常显示。 */
+.card.collapsible.collapsed:not(.head-in-toolbar) > *:not(h2) { display: none !important; }
+.card.collapsible.head-in-toolbar.collapsed > *:not(.toolbar) { display: none !important; }
+.card.collapsible.head-in-toolbar.collapsed > .toolbar { margin-bottom: 0; }
+/* B 型的 h2 后面紧跟着刷新按钮，不能给 h2 设 flex:1：
+   那样 caret 会被推到按钮左边、夹在标题和按钮之间。
+   保持 h2 为内容宽度，caret 就紧贴标题，点起来指向明确。 */
 .card h2 .count { background: var(--badge-bg); color: var(--accent); font-size: 12px; border-radius: 10px; padding: 1px 8px; }
 table { width: 100%; border-collapse: collapse; }
-th { text-align: left; color: var(--text-dim); font-weight: 500; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+/* 底线用 inset 阴影而不是 border-bottom：border-collapse: collapse 下
+   sticky 表头的 border 在 Chrome 里会随滚动丢失，阴影不会。 */
+th { text-align: left; color: var(--text-dim); font-weight: 500; font-size: 12px; padding: 8px 10px; box-shadow: inset 0 -1px 0 var(--border); }
+/* 表头吸顶：长表格滚动时列名始终可见。
+   top 必须越过「header + 吸顶页签栏」，由 --sticky-top 实测写入；
+   z-index 低于 nav(9)，表头滑到页签栏位置时会被页签盖住而不是压在上面。 */
+table thead th {
+  position: sticky;
+  top: var(--sticky-top, 110px);
+  z-index: 4;
+  background: var(--panel);
+}
 td { padding: 9px 10px; border-bottom: 1px solid rgba(45,51,59,.5); font-size: 13px; }
 tr:hover td { background: rgba(79,140,255,.05); }
 tr.clickable { cursor: pointer; }
@@ -276,6 +324,9 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   nav button { padding: 9px 12px; white-space: nowrap; font-size: 13px; }
   .card { padding: 12px; }
   .card > table { display: block; overflow-x: auto; white-space: nowrap; }
+  /* table 变成 block + overflow-x:auto 后自己就成了滚动容器，
+     th 的 sticky 会相对该容器计算而错位，移动端直接关掉 */
+  table thead th { position: static; }
   input[type="text"] { width: 100%; }
   .toolbar { gap: 8px; }
   .suggest { width: 100%; }
@@ -332,16 +383,16 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </div>
       <div class="hint" id="scan-message"></div>
     </div>
-    <div class="card">
-      <h2>历史买点成功率 <span class="count" id="count-success">样本不足</span></h2>
+    <div class="card collapsible" data-collapse="success">
+      <h2>历史买点成功率 <span class="count" id="count-success">样本不足</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:10px">
         口径：<b>一买</b>以「入圈后是否引出二买」计成败；<b>二买</b>以「确认后 <b id="wait-bars-note">30</b> 根考验窗口内
         是否守住二买低点」计成败。全部统计自<b>本地关注圈历史记录</b>，不是实时行情推导，样本随时间累积才会稳定。
       </div>
       <div class="kv" id="success-kv"></div>
     </div>
-    <div class="card">
-      <h2>一买候选 <span class="count" id="count-first">0</span></h2>
+    <div class="card collapsible" data-collapse="first">
+      <h2>一买候选 <span class="count" id="count-first">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">近30日触发「背驰+一买」→ 纳入关注圈等待二买（入场券，非买入提示）</div>
       <div class="table-tools">
         <input type="text" id="search-first" placeholder="搜索代码 / 名称" data-search="table-first">
@@ -353,8 +404,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-first" style="display:none">暂无一买候选，点击上方按钮启动扫描</div>
     </div>
-    <div class="card">
-      <h2>二买信号 <span class="count" id="count-second">0</span></h2>
+    <div class="card collapsible" data-collapse="second">
+      <h2>二买信号 <span class="count" id="count-second">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">近30日触发「一买后回调不破前低 + 力度衰减」→ 机会提示</div>
       <div class="table-tools">
         <input type="text" id="search-second" placeholder="搜索代码 / 名称" data-search="table-second">
@@ -366,8 +417,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-second" style="display:none">暂无二买信号</div>
     </div>
-    <div class="card">
-      <h2>板块热度 <span class="count" id="count-heat">—</span></h2>
+    <div class="card collapsible" data-collapse="heat">
+      <h2>板块热度 <span class="count" id="count-heat">—</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="toolbar" style="margin-bottom:6px">
         <span class="hint" id="heat-meta">近 3 个交易日买点按板块聚合</span>
         <button class="ghost" id="btn-heat-refresh" style="padding:5px 12px;font-size:12px">刷新</button>
@@ -378,8 +429,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </div>
       <div class="heat-list" id="heat-list"></div>
     </div>
-    <div class="card">
-      <h2>扫描历史 <span class="count" id="count-runs">—</span></h2>
+    <div class="card collapsible" data-collapse="runs">
+      <h2>扫描历史 <span class="count" id="count-runs">—</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">每次扫描的复盘总结（按信号类型的命中数）。复盘只统计该次任务命中的信号。</div>
       <table id="table-runs">
         <thead><tr><th>开始</th><th>范围</th><th>状态</th><th>进度</th><th>耗时</th><th>一买</th><th>二买</th><th>三买</th><th>一卖</th><th>二卖</th></tr></thead>
@@ -418,8 +469,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
     <div id="error-box" style="display:none"></div>
     <div id="verdict-box" style="display:none"></div>
     <div id="system-match" style="display:none"></div>
-    <div class="card">
-      <h2>K线结构图</h2>
+    <div class="card collapsible" data-collapse="chart">
+      <h2>K线结构图<span class="caret" aria-hidden="true">▾</span></h2>
       <div class="legend">
         <span><i class="dot" style="background:#f0b429"></i>一买</span>
         <span><i class="dot" style="background:#3fb950"></i>二买</span>
@@ -441,25 +492,25 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
         <div class="chart-loading" id="chart-loading" style="display:none">正在分析 K 线结构…</div>
       </div>
     </div>
-    <div class="card" id="tf-card" style="display:none">
-      <h2>三级别并排 <span class="hint" style="font-weight:400;font-size:12px">同屏对照，判断级别联立</span></h2>
+    <div class="card collapsible" id="tf-card" data-collapse="tf" style="display:none">
+      <h2>三级别并排 <span class="hint" style="font-weight:400;font-size:12px">同屏对照，判断级别联立</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">
         日线决定选股方向，30 / 15 分钟只做区间套确认与日内择时。<b>分钟数据源仅保留约 10 个交易日</b>，
         所以小图只覆盖最近一段，不代表全历史。点任一格可切到该周期主图。
       </div>
       <div class="tf-grid" id="tf-grid"></div>
     </div>
-    <div class="card" id="signal-detail" style="display:none">
-      <h2>信号明细</h2>
+    <div class="card collapsible" id="signal-detail" data-collapse="detail" style="display:none">
+      <h2>信号明细<span class="caret" aria-hidden="true">▾</span></h2>
       <div class="meta-grid" id="signal-meta"></div>
     </div>
-    <div class="card" id="timeline-card" style="display:none">
-      <h2>历史信号时间线 <span class="count" id="count-timeline">0</span></h2>
+    <div class="card collapsible" id="timeline-card" data-collapse="timeline" style="display:none">
+      <h2>历史信号时间线 <span class="count" id="count-timeline">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">这只票历史上每一次买点 / 卖点按时间倒序排列。点条目可跳到对应信号。</div>
       <div class="timeline" id="timeline-list"></div>
     </div>
-    <div class="card" id="sensitivity-card" style="display:none">
-      <h2>参数敏感性回测</h2>
+    <div class="card collapsible" id="sensitivity-card" data-collapse="sensitivity" style="display:none">
+      <h2>参数敏感性回测<span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">
         对关键阈值取多档重跑，看信号数如何变化（纯本地，不联网）。
         若降低阈值后信号数暴涨，说明当前结论靠放宽阈值硬凑，可信度要打折。
@@ -469,9 +520,9 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   </section>
 
   <section class="tab" id="tab-favorites">
-    <div class="card">
+    <div class="card collapsible head-in-toolbar" data-collapse="fav">
       <div class="toolbar">
-        <h2 style="margin:0">自选持仓 <span class="count" id="count-fav">0</span></h2>
+        <h2 style="margin:0">自选持仓 <span class="count" id="count-fav">0</span><span class="caret" aria-hidden="true">▾</span></h2>
         <button class="ghost" id="btn-fav-refresh">刷新</button>
         <span class="hint" id="fav-meta">填了成本价才会算浮盈；风险提示取近 3 个交易日卖点</span>
       </div>
@@ -489,8 +540,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-fav" style="display:none">自选为空：到「个股查询」分析一只股票后点「☆ 自选」加入</div>
     </div>
-    <div class="card">
-      <h2>批量区间套 <span class="count" id="count-batch-nesting">—</span></h2>
+    <div class="card collapsible" data-collapse="batch-nesting">
+      <h2>批量区间套 <span class="count" id="count-batch-nesting">—</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">
         一次跑完自选 + 关注圈的 30 分钟区间套。m30 仅保留约 10 个交易日，
         窗口外的日线买点必然「未确认」——这是数据边界，不是缺陷。
@@ -501,9 +552,9 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   </section>
 
   <section class="tab" id="tab-watch">
-    <div class="card">
+    <div class="card collapsible head-in-toolbar" data-collapse="watch">
       <div class="toolbar">
-        <h2 style="margin:0">关注圈 <span class="count" id="count-watch">0</span></h2>
+        <h2 style="margin:0">关注圈 <span class="count" id="count-watch">0</span><span class="caret" aria-hidden="true">▾</span></h2>
         <button class="ghost" id="btn-watch-refresh">重评关注圈</button>
         <span class="hint" id="watch-meta">重评走本地 K 线缓存，不联网，约几秒</span>
       </div>
@@ -547,8 +598,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
         注：同一次回调可能同时满足二买与三买定义（既未破一买低点、也未跌回中枢），此时会同时出现在两个池中。
       </div>
     </div>
-    <div class="card">
-      <h2>一买池 <span class="count" id="count-pool-first">0</span></h2>
+    <div class="card collapsible" data-collapse="pool-first">
+      <h2>一买池 <span class="count" id="count-pool-first">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">背驰 + 一买成立 → 纳入关注圈等待二买</div>
       <div class="table-tools">
         <input type="text" id="search-pool-first" placeholder="搜索代码 / 名称" data-search="table-pool-first">
@@ -560,8 +611,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-pool-first" style="display:none">近三日无一买信号</div>
     </div>
-    <div class="card">
-      <h2>二买池 <span class="count" id="count-pool-second">0</span></h2>
+    <div class="card collapsible" data-collapse="pool-second">
+      <h2>二买池 <span class="count" id="count-pool-second">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">一买后回调不破前低 + 力度衰减 → 机会提示</div>
       <div class="table-tools">
         <input type="text" id="search-pool-second" placeholder="搜索代码 / 名称" data-search="table-pool-second">
@@ -573,8 +624,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-pool-second" style="display:none">近三日无二买信号</div>
     </div>
-    <div class="card">
-      <h2>三买池 <span class="count" id="count-pool-third">0</span></h2>
+    <div class="card collapsible" data-collapse="pool-third">
+      <h2>三买池 <span class="count" id="count-pool-third">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">中枢后向上离开，回调不跌回中枢上沿 → 三买成立</div>
       <div class="table-tools">
         <input type="text" id="search-pool-third" placeholder="搜索代码 / 名称" data-search="table-pool-third">
@@ -586,8 +637,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-pool-third" style="display:none">近三日无三买信号</div>
     </div>
-    <div class="card">
-      <h2>一卖风险 <span class="count" id="count-pool-first-sell">0</span></h2>
+    <div class="card collapsible" data-collapse="pool-first-sell">
+      <h2>一卖风险 <span class="count" id="count-pool-first-sell">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">上涨段出现顶背驰 → 一卖成立，持仓可留意减仓（不参与选股）</div>
       <div class="table-tools">
         <input type="text" id="search-pool-first-sell" placeholder="搜索代码 / 名称" data-search="table-pool-first-sell">
@@ -599,8 +650,8 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-pool-first-sell" style="display:none">近三日无一卖信号<br><span class="hint">若刚从旧版本升级，历史信号里没有卖点记录，需重新执行一次市场扫描才会生成</span></div>
     </div>
-    <div class="card">
-      <h2>二卖风险 <span class="count" id="count-pool-second-sell">0</span></h2>
+    <div class="card collapsible" data-collapse="pool-second-sell">
+      <h2>二卖风险 <span class="count" id="count-pool-second-sell">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">一卖后反弹不创新高 + 力度衰减 → 二卖成立，顶部确认</div>
       <div class="table-tools">
         <input type="text" id="search-pool-second-sell" placeholder="搜索代码 / 名称" data-search="table-pool-second-sell">
@@ -615,9 +666,9 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   </section>
 
   <section class="tab" id="tab-pick">
-    <div class="card">
+    <div class="card collapsible head-in-toolbar" data-collapse="pick">
       <div class="toolbar">
-        <h2 style="margin:0">高胜算股票池 <span class="count" id="count-pick">—</span></h2>
+        <h2 style="margin:0">高胜算股票池 <span class="count" id="count-pick">—</span><span class="caret" aria-hidden="true">▾</span></h2>
         <button class="ghost" id="btn-pick-refresh">刷新</button>
         <span class="hint" id="pick-meta"></span>
       </div>
@@ -655,9 +706,9 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
   </section>
 
   <section class="tab" id="tab-system">
-    <div class="card">
+    <div class="card collapsible head-in-toolbar" data-collapse="sys">
       <div class="toolbar">
-        <h2 style="margin:0">交易体系 <span class="count" id="count-sys">—</span></h2>
+        <h2 style="margin:0">交易体系 <span class="count" id="count-sys">—</span><span class="caret" aria-hidden="true">▾</span></h2>
         <button class="ghost" id="btn-sys-refresh">刷新</button>
         <button class="ghost" id="btn-sys-rebuild">重建结局样本</button>
         <span class="hint" id="sys-meta">增益 = 该结构拉升成功率 − 全体基准</span>
@@ -668,13 +719,13 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </div>
       <div class="kv" id="sys-kv"></div>
     </div>
-    <div class="card">
-      <h2>单特征增益</h2>
+    <div class="card collapsible" data-collapse="sys-gain">
+      <h2>单特征增益<span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">每个特征按取值分箱，增益为正 = 该箱更容易拉升，为负 = 更难。样本数少的箱不可信。</div>
       <div id="sys-gain"></div>
     </div>
-    <div class="card">
-      <h2>结构-买点-胜率卡 <span class="count" id="count-cards">0</span></h2>
+    <div class="card collapsible" data-collapse="sys-cards">
+      <h2>结构-买点-胜率卡 <span class="count" id="count-cards">0</span><span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">「什么结构容易在什么买点拉升」的直接回答，按增益降序。仅保留样本 ≥ 30 的格子。</div>
       <table id="table-cards">
         <thead><tr><th data-key="kind" data-type="text">买点</th><th data-key="feature" data-type="text">特征</th><th data-key="bucket" data-type="text">结构</th><th data-key="n" data-type="num">样本</th><th data-key="win_rate" data-type="num">拉升率</th><th data-key="gain" data-type="num">增益</th></tr></thead>
@@ -682,16 +733,16 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
       </table>
       <div class="empty" id="empty-cards" style="display:none">暂无结构卡：先重建结局样本</div>
     </div>
-    <div class="card">
-      <h2>时间分割验证</h2>
+    <div class="card collapsible" data-collapse="sys-validate">
+      <h2>时间分割验证<span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">
         用<b>老样本</b>算出增益，再用<b>新样本</b>验证：把新样本按体系分分成高/中/低三档，看高分组是否真的更赚钱。
         高分组拉升率显著高于低分组 = 体系有真实区分度（不是过拟合）。
       </div>
       <div id="sys-validate"></div>
     </div>
-    <div class="card">
-      <h2>体系快照历史</h2>
+    <div class="card collapsible" data-collapse="sys-snapshots">
+      <h2>体系快照历史<span class="caret" aria-hidden="true">▾</span></h2>
       <div class="hint" style="margin-bottom:8px">每次重建结局样本都会存一份快照，追踪体系如何随数据成长。</div>
       <table id="table-snapshots">
         <thead><tr><th>时间</th><th>样本数</th><th>阈值</th><th>基准拉升率</th><th>验证区分度</th></tr></thead>
@@ -3116,6 +3167,94 @@ if (['day', 'm30', 'm15'].includes(initialPeriod)) {
 if (typeof prefs.onlyLatestDivergence === 'boolean') {
   $('divergence-all').checked = prefs.onlyLatestDivergence;
 }
+
+// ---- 买点区块折叠：点标题行收起 / 展开 ----
+// 只切换 card 上的 collapsed 类，正文由 CSS 隐藏；view.items、分页页码、
+// 排序状态完全不参与，所以收起再展开后表格还是原来那页那序。
+const COLLAPSE_KEY = 'chanpicker-collapsed';
+
+function loadCollapseState() {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) {
+    return {};   // 存不下 / 被禁用都当没存过，不影响功能
+  }
+}
+
+function saveCollapseState(state) {
+  try {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify(state));
+  } catch (e) { /* 忽略：无痕模式等场景存不下不影响折叠 */ }
+}
+
+function applyCollapseState() {
+  const saved = loadCollapseState();
+  document.querySelectorAll('.card.collapsible[data-collapse]').forEach(card => {
+    card.classList.toggle('collapsed', !!saved[card.dataset.collapse]);
+  });
+}
+
+function toggleCollapse(card) {
+  const key = card.dataset.collapse;
+  if (!key) return;
+  const collapsed = card.classList.toggle('collapsed');
+  const saved = loadCollapseState();
+  if (collapsed) {
+    saved[key] = true;
+  } else {
+    delete saved[key];      // 展开就删键，避免状态文件无限膨胀
+    refreshChartsIn(card);
+  }
+  saveCollapseState(saved);
+}
+
+// 图表在 display:none 期间被量成 0×0，展开后必须让它重新量一次，
+// 否则 K 线 / 三级别并排会画成空白或挤在左上角。
+function refreshChartsIn(card) {
+  const hasChart = card.querySelector('#chart, .chart-box, #tf-grid, #sensitivity-body');
+  if (!hasChart) return;
+  requestAnimationFrame(() => {
+    window.dispatchEvent(new Event('resize'));   // 走已有的 resize 监听（主图）
+    if (typeof echarts === 'undefined' || !echarts.getInstanceByDom) return;
+    card.querySelectorAll('#chart, #tf-grid *').forEach(el => {
+      const inst = echarts.getInstanceByDom(el);
+      if (inst) inst.resize();
+    });
+  });
+}
+
+// 用事件委托而不是逐个绑定 h2：卡片内容会被 paintTable 反复重绘，
+// 委托到 document 就不用担心节点被替换后监听器丢失。
+// 注意必须用 closest('.card.collapsible') 往上找，不能取 h2.parentElement：
+// 有一类区块的标题在 .toolbar 里（自选/关注圈/选股池/交易体系），
+// 它们的父级是 toolbar，取父级会判成「不是可折叠卡片」而点击无反应。
+document.addEventListener('click', event => {
+  const head = event.target.closest('h2');
+  if (!head) return;
+  const card = head.closest('.card.collapsible');
+  if (!card) return;
+  toggleCollapse(card);
+});
+
+// header 高度不是固定值（字号、状态徽章换行都会变），
+// 页签栏 sticky 的 top 必须实测，否则滚起来会重叠或留缝。
+// 表头吸顶还要再往下让一个页签栏的高度，所以另算 --sticky-top。
+function syncStickyOffset() {
+  const header = document.querySelector('header');
+  const nav = document.querySelector('nav');
+  const headerH = header ? header.offsetHeight : 0;
+  const navH = nav ? nav.offsetHeight : 0;
+  const root = document.documentElement.style;
+  root.setProperty('--header-h', headerH + 'px');
+  root.setProperty('--sticky-top', (headerH + navH) + 'px');
+}
+
+applyCollapseState();
+syncStickyOffset();
+window.addEventListener('resize', syncStickyOffset);
+window.addEventListener('load', syncStickyOffset);   // 字体加载完高度可能微调
 
 checkHealth();
 renderNav();

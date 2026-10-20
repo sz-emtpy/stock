@@ -67,6 +67,39 @@
 24. **验证 localhost 服务一律加 `curl --noproxy '*'`**：本机 `HTTP_PROXY=127.0.0.1:60789`
     会劫持所有 localhost 请求，返回的 502 是代理的、不是后端的。不知道这点会误判成「服务挂了」，
     白白排查半天。
+25. **线上慢 ≠ 数据库慢：先量带宽，再谈换库（2026-10-20 实测 stock.temeu.top）**：
+    - 架构是 **nginx → uvicorn(127.0.0.1:8787) → SQLite**（`DEPLOY.md:340`）。
+    - 线上出口实测仅 **110~130 KB/s（≈1Mbps）**：`/api/market/candidates` 体积 7.00MB，
+      **TTFB 4.81s 就出首字节，总耗时 63.17s** —— 58 秒纯下载。`echarts.min.js` 1.03MB 单文件 7.83s。
+    - **nginx 未开 gzip**（有 `Vary: Accept-Encoding` 却无 `Content-Encoding`）。gzip 实测
+      candidates 6.43MB→0.36MB（**18.1×**）、echarts→0.33MB（3.1×）。**nginx 默认 `gzip_types`
+      只含 `text/html`，必须显式加 `application/json`**，否则 API JSON 不压缩。
+    - 首页 8 个请求**共用一把 SQLite RLock 串行**：并发时 `risk` 0.22s→3.98s、
+      `scan/history` 0.005s→5.21s。首页总耗时≈串行累加，不是取最大值。
+    - `candidates` 6s 里 **3.8s 是 `symbol_success_rates(1952 只)`**；`load_close_series` 760ms（78 万行）、
+      `signals_for_symbols` 322ms（每条 `json.loads(meta_json)`，胜率用不到 meta）。
+      **其中 395 只纯三买标的白算**（THIRD_BUY 的 `stat_key=None` 直接显示「—」）。
+    - **真索引缺口**：`signals_for_symbols` 走 `idx_signals_period` + `USE TEMP B-TREE FOR ORDER BY`，
+      `symbol IN` 没命中。缺 `signals (symbol, period, trade_date)`。
+    - 响应字段：`system_hits` 占 **78.2%**（5.02MB）、`meta` 11.7%（0.75MB，候选表不用）。
+    - **结论：不换 MySQL/PG**。7MB JSON × 110KB/s 与引擎无关，换库只会再加网络往返。
+      该换的时机：多实例并发写 / >50GB / 跨机部署 / 需要行级锁事务。
+    - 方案见 `改造方案-首页查询性能优化.md`（P0 gzip → 4-6s；P0+P1 → 2-3s）。
+26. **前端折叠/吸顶的三条不可动摇约束（2026-10-20）**：
+    - **折叠只准用 CSS 隐藏，禁止给表格包一层容器**：`table` 必须是 `.card` 的直接子元素，
+      否则移动端 `.card > table { display:block; overflow-x:auto }` 静默失效。
+      收起规则 `.card.collapsible.collapsed:not(.head-in-toolbar) > *:not(h2)`。
+    - **必须 `!important`**：`.empty` 空状态提示的 display 是 JS 写的 inline style，
+      普通选择器盖不住，会留在收起后的标题下面。
+    - **标题在 `.toolbar` 里的区块要标 `head-in-toolbar`**（fav/watch/pick/sys）：
+      A 型规则会连 toolbar（含标题和刷新按钮）一起隐藏，且 B 型规则不会恢复它。
+      事件委托必须用 `closest('.card.collapsible')`，不能取 `h2.parentElement`。
+    - **表头吸顶**：`top: var(--sticky-top)` = headerH+navH（实测 115px），`z-index:4` 必须 < nav(9)。
+      `border-collapse: collapse` 下 sticky th 的 border 会丢 → 底线用 `box-shadow: inset 0 -1px 0`。
+      **<860px 必须关掉**（table 变 block 滚动容器后 sticky 会错位）。
+    - **图表区块展开必须 `refreshChartsIn()`**，否则 ECharts 在 display:none 期间被量成 0×0。
+    - 全部 24 区块清单与坑见 `.workbuddy/memory/2026-10-20.md`；回归
+      `tests/test_frontend_contract.py::CollapsibleAndStickyContractTest`（新增区块要同步改 `COLLAPSIBLE_KEYS`）。
 
 ## 数据源事实（本机实测，别凭直觉改）
 

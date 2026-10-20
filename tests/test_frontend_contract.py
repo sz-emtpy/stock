@@ -689,5 +689,138 @@ class ChartBigViewContractTest(unittest.TestCase):
         self.assertIn("closeBigChart()", self.html)
 
 
+class CollapsibleAndStickyContractTest(unittest.TestCase):
+    """买点/分析区块折叠 + 页签吸附 + 表头吸顶的契约。
+
+    这些都容易在后续改样式时被无意破坏，而且破坏了不会报错：
+    - 折叠规则一旦改成 `display:none` 之外的写法，收起后卡片会继续占位；
+    - 一旦有人把表格包进新的一层 div，`.card > table`（移动端横向滚动）
+      就会静默失效——这正是当初刻意不包 `.collapse-body` 的原因。
+    - nav 一旦丢了 sticky，滚动长表格时切页签要一路滚回顶部；
+    - th 一旦丢了 sticky，滚到第 30 行就不知道每列是什么了。
+    """
+
+    # 需要能折叠的区块：覆盖全部 7 个页签里所有带标题的卡片。
+    # 只有两个 card 不在此列——市场扫描工具栏、买卖点池口径说明，
+    # 它们没有 h2，是纯操作/说明区，没有可点的标题行。
+    COLLAPSIBLE_KEYS = (
+        # 市场扫描
+        "success", "first", "second", "heat", "runs",
+        # 个股查询
+        "chart", "tf", "detail", "timeline", "sensitivity",
+        # 自选 / 关注圈
+        "fav", "batch-nesting", "watch",
+        # 三日买卖点池
+        "pool-first", "pool-second", "pool-third",
+        "pool-first-sell", "pool-second-sell",
+        # 体系选股 / 交易体系
+        "pick", "sys", "sys-gain", "sys-cards", "sys-validate", "sys-snapshots",
+    )
+    # 标题在 .toolbar 里的区块：收起时必须保留 toolbar（含刷新按钮），
+    # 否则用户连「展开」以外的操作都点不到。
+    HEAD_IN_TOOLBAR_KEYS = ("fav", "watch", "pick", "sys")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_all_titled_sections_are_collapsible(self) -> None:
+        for key in self.COLLAPSIBLE_KEYS:
+            self.assertIn(f'data-collapse="{key}"', self.html, f"区块 {key} 没有声明可折叠")
+        self.assertEqual(
+            self.html.count('data-collapse="'),
+            len(self.COLLAPSIBLE_KEYS),
+            "可折叠区块数量与预期不符（新增/删除区块时要同步更新本测试）",
+        )
+
+    def test_every_collapsible_block_has_a_caret(self) -> None:
+        """有 data-collapse 就必须有 caret，否则用户不知道标题能点。"""
+
+        self.assertEqual(
+            self.html.count('class="caret"'),
+            len(self.COLLAPSIBLE_KEYS),
+            "caret 数量与可折叠区块数不一致",
+        )
+
+    def test_head_in_toolbar_blocks_are_marked(self) -> None:
+        for key in self.HEAD_IN_TOOLBAR_KEYS:
+            self.assertRegex(
+                self.html,
+                r'class="card collapsible head-in-toolbar"\s+data-collapse="' + re.escape(key) + r'"',
+                f"区块 {key} 的标题在 toolbar 里，必须标 head-in-toolbar",
+            )
+        # A 型规则必须显式排除 B 型：否则 `> *:not(h2)` 会先把 toolbar
+        # （含标题与刷新按钮）隐藏掉，而 B 型规则并不会把它恢复回来。
+        self.assertIn(
+            ".card.collapsible.collapsed:not(.head-in-toolbar) > *:not(h2)", self.html
+        )
+        self.assertIn(
+            ".card.collapsible.head-in-toolbar.collapsed > *:not(.toolbar)", self.html
+        )
+
+    def test_collapse_hides_body_purely_by_css(self) -> None:
+        """收起只能靠 CSS，不能改动 DOM 结构。
+
+        若改成包一层容器，`.card > table` 会失去匹配，移动端表格横向滚动会失效。
+        """
+
+        self.assertIn(".card.collapsible.collapsed:not(.head-in-toolbar) > *:not(h2)", self.html)
+        # 空状态提示的 display 是 JS 写的 inline style，普通选择器盖不住，
+        # 必须 !important，否则收起后「暂无数据」还会浮在标题下面
+        self.assertIn("display: none !important", self.html)
+        # 反向保护：移动端横向滚动规则必须仍然直接挂在 .card 下
+        self.assertIn(".card > table { display: block; overflow-x: auto;", self.html)
+
+    def test_collapse_state_is_persisted(self) -> None:
+        self.assertIn("chanpicker-collapsed", self.html)
+        for name in ("loadCollapseState", "saveCollapseState", "applyCollapseState", "toggleCollapse"):
+            self.assertRegex(self.html, r"function\s+" + name + r"\s*\(")
+        # 初始化时必须应用一次，否则刷新后用户的选择丢失
+        self.assertRegex(self.html, re.compile(r"^\s*applyCollapseState\(\);\s*$", re.M))
+
+    def test_charts_resized_after_expand(self) -> None:
+        """K 线图/三级别并排在 display:none 期间会被量成 0×0，展开必须重新量一次。"""
+
+        self.assertRegex(self.html, r"function\s+refreshChartsIn\s*\(")
+        self.assertIn("refreshChartsIn(card)", self.html)
+        self.assertIn("getInstanceByDom", self.html)
+
+    def test_nav_is_sticky_under_header(self) -> None:
+        nav_rule = re.search(r"nav\s*\{[^}]*\}", self.html, re.S)
+        self.assertIsNotNone(nav_rule)
+        body = nav_rule.group(0)  # type: ignore[union-attr]
+        self.assertIn("position: sticky", body, "nav 未吸附，滚动后页签会滚走")
+        self.assertIn("top: var(--header-h", body, "nav 的 top 必须用实测的 header 高度，不能硬编码")
+        # sticky 元素必须有背景，否则滚动时内容会从页签后面透出来
+        self.assertRegex(body, r"background:\s*var\(")
+
+    def test_table_header_is_sticky(self) -> None:
+        rule = re.search(r"table thead th\s*\{[^}]*\}", self.html, re.S)
+        self.assertIsNotNone(rule, "表头没有吸顶规则")
+        body = rule.group(0)  # type: ignore[union-attr]
+        self.assertIn("position: sticky", body)
+        # 必须让开 header + 页签栏，否则表头会被页签盖住
+        self.assertIn("top: var(--sticky-top", body)
+        # z-index 要低于 nav(9)，表头滑到页签位置时藏在页签下面
+        self.assertRegex(body, r"z-index:\s*[1-8];")
+        # 必须有实色背景，否则行内容会从表头底下透出来
+        self.assertRegex(body, r"background:\s*var\(")
+        # border-collapse: collapse 下 sticky th 的 border 会丢，必须用阴影画底线
+        self.assertIn("box-shadow: inset 0 -1px 0", self.html)
+
+    def test_sticky_header_disabled_on_mobile(self) -> None:
+        """移动端 table 变成 block 滚动容器，th sticky 会错位。"""
+
+        media = re.search(r"@media \(max-width: 860px\)\s*\{.*?\n\}", self.html, re.S)
+        self.assertIsNotNone(media)
+        self.assertIn("table thead th { position: static; }", media.group(0))  # type: ignore[union-attr]
+
+    def test_header_height_is_synced_by_script(self) -> None:
+        self.assertRegex(self.html, r"function\s+syncStickyOffset\s*\(")
+        self.assertIn("--header-h", self.html)
+        self.assertIn("--sticky-top", self.html)
+        self.assertRegex(self.html, re.compile(r"^\s*syncStickyOffset\(\);\s*$", re.M))
+
+
 if __name__ == "__main__":
     unittest.main()

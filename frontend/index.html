@@ -452,6 +452,7 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; padding: 2
         <button data-period="m15">15分钟</button>
       </div>
       <button class="primary" id="btn-analyze">分析</button>
+      <button class="ghost" id="btn-live-refresh" title="强制拉最新行情并重算（盘中盯盘用，走实时源）">盘中刷新</button>
       <button class="ghost" id="btn-nesting">30分钟区间套</button>
       <button class="ghost" id="btn-fav" title="加入 / 移出自选">☆ 自选</button>
       <label class="hint" style="display:flex;align-items:center;gap:6px">
@@ -2613,6 +2614,12 @@ $('btn-scan').addEventListener('click', () => startScan('all'));
 $('btn-scan-hs300').addEventListener('click', () => startScan('hs300'));
 $('btn-pools-refresh').addEventListener('click', loadPools);
 $('btn-analyze').addEventListener('click', runAnalyze);
+// 盘中刷新：勾上「强制刷新行情」再走正常分析链路。
+// 复用同一条链路而不是新写一套渲染——盘中要的只是「绕过后端缓存」这一个差别。
+$('btn-live-refresh').addEventListener('click', () => {
+  $('refresh-flag').checked = true;
+  runAnalyze();
+});
 $('btn-nesting').addEventListener('click', runIntervalNesting);
 $('btn-watch-refresh').addEventListener('click', refreshWatchlist);
 // 背驰段「显示全部」开关：切换后按上一次的分析结果重画，不重新请求接口

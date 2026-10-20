@@ -11,6 +11,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "requests>=2.31",
+    # 多源互补：baostock 提供 6.8 年分钟历史（m30 13152 根）与真实复权，
+    # 东财 HTTP 补当天/盘中最新 K 线。缺它会自动降级到 westock，功能不中断。
+    "baostock>=0.8",
 ]
 
 [project.scripts]

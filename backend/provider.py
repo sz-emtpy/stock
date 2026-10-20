@@ -2,19 +2,52 @@
 
 The provider never fabricates quotes: if the CLI is unavailable or not
 authorized, it raises MarketDataError so callers can surface a real status.
+
+多源互补（2026-10-20 起）：
+`fetch_bars` 优先走 `backend.sources`（baostock 长历史 + 东财当天/盘中，合成一条序列），
+失败才回落到原来的 westock CLI。`fetch_bars_batch` 保持走 westock 批量 ——
+全市场 5000 只逐只走 SDK 会把扫描从几十分钟拖成几小时，批量速度必须留给 CLI。
+
+回滚开关：`CHANPICKER_SOURCE=westock` 可一键退回纯 westock（出问题时不改代码就能恢复）。
 """
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from chanpicker.core import Bar
+
+log = logging.getLogger(__name__)
+
+# 最近一次多源取数的报告（诊断用，/api/health 会带出来）
+LAST_SOURCE_REPORT: Dict[str, dict] = {}
+
+ENV_SOURCE_MODE = "CHANPICKER_SOURCE"
+
+
+def multi_source_enabled() -> bool:
+    """默认开启多源；设为 westock 即整段回退（出问题时不改代码就能恢复）。
+
+    未显式设置时，**测试进程默认关闭**：单测里只要漏掉一处 mock，
+    多源路径就会真的去连 baostock/东财，让整个套件变慢、变脆、依赖外网。
+    显式设置 CHANPICKER_SOURCE 时一律以显式值为准，不猜。
+    """
+    raw = os.getenv(ENV_SOURCE_MODE)
+    if raw is not None:
+        return raw.strip().lower() != "westock"
+    if "unittest" in sys.modules:
+        return False
+    return True
+
 
 WESTOCK_BIN_CANDIDATES = (
     "westock",
@@ -223,6 +256,30 @@ def fetch_bars(
     period = normalize_period(period)
     if period == "day" and days < 30:
         raise ValueError("days must be >= 30")
+
+    # 1) 多源互补优先：baostock 长历史 + 东财当天/盘中尾部。
+    #    返回的 report 记到 LAST_SOURCE_REPORT，便于 /api/health 排查
+    #    「这只票到底用了哪个源、有没有源冲突」。
+    if multi_source_enabled():
+        try:
+            from .sources import registry  # 局部导入：缺 baostock 时不影响 westock 路径
+
+            bars, report = registry.fetch_bars(symbol, period, days, fq)
+            if bars:
+                LAST_SOURCE_REPORT[symbol] = report
+                if report.get("conflicts"):
+                    log.warning(
+                        "%s %s 多源冲突 %s 根（最大 %.2f%%）",
+                        symbol,
+                        period,
+                        report.get("conflicts"),
+                        report.get("max_diff_pct", 0.0),
+                    )
+                return bars
+        except Exception as exc:  # noqa: BLE001 - 任何异常都降级，不能把详情页拖死
+            log.warning("多源取数失败，降级 westock: %s %s: %s", symbol, period, exc)
+
+    # 2) 兜底：原 westock CLI 路径（逻辑保持原样，别在这里加新行为）
     args = _kline_args(symbol, period, days, fq)
     output = ""
     for attempt in range(retries):

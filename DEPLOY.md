@@ -452,6 +452,62 @@ sudo certbot --nginx -d your.domain.com
 > certbot 生成的 443 server 块会自动沿用 6.1 的全局 gzip；若改用 6.2 的写法，
 > 记得给新块补一份 gzip 指令。
 
+#### 6.6 数据源（多源互补，2026-10-20 起）
+
+K 线不再只依赖 westock CLI，而是三个源**互补**——历史段与当天段分开取、合并成一条序列：
+
+| 源 | 负责 | 实测能力 |
+|---|---|---|
+| **baostock** | 历史主力 | m30 **13,152 根 / 6.8 年**（2020 起）、m15 26,304 根；分钟复权真实生效 |
+| **东财 HTTP** | 当天/盘中尾部 | 返回当天**正在形成的 K 线**；日线 25 年；前复权已验证 |
+| **westock** | 全市场批量扫描 + 兜底 | 20 只/次，速度快；分钟仅约 10 天 |
+
+部署要点：
+
+```bash
+# baostock 已在 pyproject.toml 的 dependencies 里，正常安装即可
+pip install -e .          # 或 uv sync
+
+# 缺 baostock 也不会挂：自动降级回 westock，只是分钟历史变短
+```
+
+**口径约定（改之前必须想清楚）**：
+- 日线用**前复权**（qfq）
+- 分钟用**不复权** —— westock 强制不复权、东财分钟 `fqt` 也无效，
+  只有保持一致，新旧 signals 才可比
+- **日线绝不跨源合并**：两家的前复权基准不同（实测同一天差 0.99%），
+  混用会在除权处留断层，笔/中枢判定会悄悄翻转。日线只取单一源（优先东财）。
+
+**盘中刷新**：个股页的「盘中刷新」按钮等价于「强制刷新行情 + 重算」，
+会走东财拿当天最新分钟 K。盘中**日线不补当天**（未收盘的日线会制造假信号）。
+
+**回滚**（出问题不改代码就能退）：
+
+```bash
+export CHANPICKER_SOURCE=westock    # 完全退回原 westock 单源
+```
+
+**补历史**（把分钟从 10 天补到 1 年）：
+
+```bash
+python3 scripts/sync_history.py --period m30 --limit 50    # 先小规模验证
+python3 scripts/sync_history.py --period m30               # 关注圈，默认约 1 年
+python3 scripts/sync_history.py --period m30 --days 0      # 全量 2020 起（约 13 小时）
+```
+
+**诊断**：
+
+```bash
+curl -s http://127.0.0.1:8787/api/market/sources | python3 -m json.tool
+# 看 baostock/eastmoney 是否 ok、东财熔断状态、最近取数用了哪个源、有无源冲突
+
+curl -s "http://127.0.0.1:8787/api/market/live?symbols=sh600519,sz000001"
+# 盘中实时快照（几十毫秒，只走东财报价，不跑缠论引擎）
+```
+
+> ⚠️ 东财有 IP 限流（实测连续 8 只后断连）。已内置 0.5s 节流 + 熔断冷却 60s，
+> 失败时自动降级到 baostock，不会卡住详情页。若频繁看到熔断，说明请求过于密集。
+
 ### 7. 每日自动扫描（定时跟踪）
 
 系统提供 `scripts/daily_scan.py`：启动一次全市场扫描并等待完成，适合 cron。

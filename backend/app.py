@@ -479,6 +479,51 @@ def interval_nesting(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/market/live")
+def market_live(
+    symbols: str = Query(..., description="逗号分隔的代码，最多 50 只，如 sh600519,sz000001"),
+) -> dict:
+    """盘中实时快照（最新价 / 涨跌幅 / 成交额）。
+
+    为什么不直接复用 /api/analyze：analyze 会跑完整缠论引擎 + 落库，几百毫秒到数秒，
+    盘中每几十秒刷一次太重。这里只走东财报价接口，几十毫秒，专门给「盯盘」用。
+    K 线级别的刷新仍然走 `/api/analyze?refresh=true`。
+    """
+
+    from .sources import registry
+
+    codes = [c.strip() for c in symbols.split(",") if c.strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="symbols 不能为空")
+    if len(codes) > 50:
+        raise HTTPException(status_code=400, detail="一次最多 50 只")
+    quotes = registry.fetch_quote(codes)
+    return {
+        "available": bool(quotes),
+        "count": len(quotes),
+        "quotes": quotes,
+        "message": "" if quotes else "实时源暂不可用（东财限流或非交易时段），可稍后重试",
+    }
+
+
+@app.get("/api/market/sources")
+def market_sources() -> dict:
+    """数据源诊断：各源是否可用、最近一次取数用了谁、有没有源冲突。
+
+    每次调用会真发一次小请求探活，别放进轮询里。
+    """
+
+    from .provider import LAST_SOURCE_REPORT, multi_source_enabled
+    from .sources import eastmoney, registry
+
+    return {
+        "multi_source": multi_source_enabled(),
+        "sources": registry.status(),
+        "eastmoney_circuit": eastmoney.circuit_state(),
+        "recent_reports": dict(list(LAST_SOURCE_REPORT.items())[-5:]),
+    }
+
+
 @app.get("/api/market/pools")
 def market_pools(
     days: int = Query(3, ge=1, le=20, description="最近 N 个交易日内触发的买点"),
